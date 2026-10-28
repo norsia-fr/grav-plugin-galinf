@@ -2,7 +2,7 @@
 ## 10/28/2026
 
 1. [](#new)
-    * **First public release**, on GitHub: [norsia-fr/grav-plugin-galinf](https://github.com/norsia-fr/grav-plugin-galinf). Install it from the admin's Direct Install with the address of a release's zip (see the README).
+    * **First public release**, on GitHub: [norsia-fr/grav-plugin-galinf](https://github.com/norsia-fr/grav-plugin-galinf). Download the Source code (zip) of the release and install it from the admin's Direct Install, Install from file (see the README).
     * **Comments per day** (Comments tab): the whole site accepts 20 comments a day by default, or as many as you set (1 to 10000), or without limit with the "Unlimited per day" option. Beyond it, new comments are refused until the next day. It stops a flood of bots coming from many addresses, which the per-address limit does not. Moderators are not counted.
 2. [](#improved)
     * `compatibility: grav: ['2.0']` in the blueprint, so that the Grav package manager only offers the plugin to Grav 2 sites; author, homepage, bug tracker and documentation links; new description and keywords.

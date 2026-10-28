@@ -50,19 +50,21 @@ shortcode, or into a template with a Twig function.
 
 The plugin is not in the Grav catalog yet. Its releases are on GitHub:
 [github.com/norsia-fr/grav-plugin-galinf/releases](https://github.com/norsia-fr/grav-plugin-galinf/releases).
-It installs in one of the following three ways.
+Download the **Source code (zip)** of the latest release, then install it in
+one of the following two ways.
 
-**From the admin, by URL**: on the release page, copy the address of the
-**Source code (zip)** link. In the admin, open the **Tools** menu, **Direct
-Install** tab (`admin/tools#direct-install`), and paste it under **Install
-from URL**.
-
-**From the admin, by file**: download that `.zip`, then in the same tab,
-under **Install from file**, drag and drop it or select it.
+**From the admin**: open the **Tools** menu, **Direct Install** tab
+(`admin/tools#direct-install`). Under **Install from file**, drag and drop
+the `.zip` or select it.
 
 **By hand**: unzip the archive, rename the folder it contains to `galinf`
 and put it in `user/plugins/`, then clear the cache (`bin/grav clearcache`,
 or the admin button).
+
+*Install from URL* does not work with a GitHub address on a default Grav
+site: the **Official GPM Only** setting (Configuration → System) only
+allows addresses of the Grav catalog. You can turn it off for the time of
+the install, then turn it back on; installing from the file avoids that.
 
 To update, install the new release the same way: settings, index,
 thumbnails and comments are kept.
