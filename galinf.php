@@ -416,14 +416,20 @@ class GalinfPlugin extends Plugin
             || ($who === 'members' && $authed)
             || ($who === 'admins' && $moderate)
         );
+        // Daily cap already reached (moderators are not limited): the
+        // lightbox says so instead of letting the visitor write a comment
+        // that would be refused when sent.
+        $dailyMax  = $moderate ? 0 : Comments::dailyMax();
+        $dailyFull = $canComment && $dailyMax > 0 && $this->getDb()->commentsToday() >= $dailyMax;
         // Captcha: only for a visitor who is not logged in.
-        $needCaptcha = $canComment && !$authed;
+        $needCaptcha = $canComment && !$authed && !$dailyFull;
 
         $payload = [
             'meta'             => $meta,
             'comments'         => $comments,
             'comments_enabled' => $enabled,
             'can_comment'      => $canComment,
+            'daily_full'       => $dailyFull,
             'need_name'        => (bool) $this->config->get('plugins.galinf.comments_require_name', false),
             'authed'           => $authed,
             'captcha'          => $needCaptcha ? $this->captchaPayload() : null,

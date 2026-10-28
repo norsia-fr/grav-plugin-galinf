@@ -283,6 +283,7 @@ ICU:
       CAPTCHA_WAIT: "Anti-bot check in progress…"
       CAPTCHA_TODO: "Please complete the anti-bot check first."
       CAPTCHA_UNAVAILABLE: "Comments are temporarily unavailable."
+      DAILY_FULL: "The site has received all the comments it accepts today. You can comment again tomorrow."
       SEND: "Send"
       SENDING: "Sending…"
       THANKS: "Thank you for your comment!"

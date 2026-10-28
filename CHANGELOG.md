@@ -1,3 +1,10 @@
+# v2.0.1
+## 10/28/2026
+
+1. [](#improved)
+    * When the site's daily comment cap is reached, the lightbox says so in place of the "Add a comment" button, instead of letting visitors write a comment that is refused when sent. If the cap is reached while someone is writing, sending shows the same notice.
+    * README: install from the release's `.zip` file. *Install from URL* refuses GitHub addresses on a default Grav site (the **Official GPM Only** setting only allows the Grav catalog).
+
 # v2.0.0
 ## 10/28/2026
 

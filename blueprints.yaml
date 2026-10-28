@@ -1,7 +1,7 @@
 name: Galinf — Infinite gallery
 slug: galinf
 type: plugin
-version: 2.0.0
+version: 2.0.1
 description: One endlessly scrolling gallery of the images of the pages you select, even tens of thousands, with a PhotoSwipe lightbox and optional comments.
 icon: images
 author:

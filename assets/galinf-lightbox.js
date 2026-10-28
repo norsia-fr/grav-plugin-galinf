@@ -746,6 +746,16 @@
             return;
           }
 
+          /* Daily cap of the site already reached: a notice instead of a
+             form whose comment would be refused when sent. */
+          if (payload.daily_full) {
+            var full = document.createElement('p');
+            full.className = 'galinf-sb-none';
+            full.textContent = t('DAILY_FULL');
+            comForm.appendChild(full);
+            return;
+          }
+
           /* Anti-bot check: 'galinf' (sum question), 'cap', 'turnstile',
              'recaptcha', or 'unavailable' (misconfigured on the server: no
              form). None for a logged-in visitor. */
@@ -889,6 +899,12 @@
               if (res && res.ok) {
                 flashMsg = t(res.pending ? 'THANKS_PENDING' : 'THANKS');
                 refreshAfterWrite(data._route);
+                return;
+              }
+              if (res && res.code === 'daily_limit') {
+                // Cap reached while writing: same notice as on opening.
+                payload.daily_full = true;
+                sbComments(payload, file, data);
                 return;
               }
               comMsg.textContent = errorText(res);

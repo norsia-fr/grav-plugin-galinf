@@ -433,7 +433,8 @@ live through Flex events and recomputed on every reindex.
 - **Comments per day** (option): 20 by default for the whole site, or
   unlimited. Beyond it, new comments are refused until the next day (server
   date). It stops a flood of bots coming from many addresses, which the
-  per-address limit does not.
+  per-address limit does not. Once it is reached, the lightbox says so in
+  place of the comment form.
 - **Site behind a proxy or a CDN** (Cloudflare, reverse proxy): the server
   only sees the intermediary's address, and every visitor would share the
   same limit. In Grav's configuration (`user/config/system.yaml`), enable the

@@ -283,6 +283,7 @@ ICU:
       CAPTCHA_WAIT: "Vérification anti-robot en cours…"
       CAPTCHA_TODO: "Complétez d’abord la vérification anti-robot."
       CAPTCHA_UNAVAILABLE: "Les commentaires sont momentanément indisponibles."
+      DAILY_FULL: "Le site a reçu tous les commentaires qu’il accepte aujourd’hui. Vous pourrez commenter de nouveau demain."
       SEND: "Envoyer"
       SENDING: "Envoi…"
       THANKS: "Merci pour votre commentaire !"
