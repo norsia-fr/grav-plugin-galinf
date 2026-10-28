@@ -1,0 +1,16 @@
+{
+    "name": "norsia-fr/grav-plugin-galinf",
+    "type": "grav-plugin",
+    "description": "Grav plugin: one endlessly scrolling gallery of the images of the pages you select, with a PhotoSwipe lightbox and optional comments.",
+    "license": "MIT",
+    "require": {
+        "php": ">=8.3",
+        "ext-gd": "*",
+        "ext-sqlite3": "*"
+    },
+    "autoload": {
+        "psr-4": {
+            "Grav\\Plugin\\Galinf\\": "classes/"
+        }
+    }
+}

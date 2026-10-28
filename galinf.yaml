@@ -1,0 +1,123 @@
+enabled: true
+
+# Which pages are indexed. NOTHING is indexed by default: choose at least
+# one of the two lists after installing.
+#   - templates only → pages using these templates, on the whole site;
+#   - roots only     → every page under these routes, whatever its template
+#                      (['/'] = the whole site);
+#   - both           → pages matching both (AND).
+templates: []
+roots: []
+
+# Image extensions included in the gallery (without the dot).
+# GIF is included (it animates in the gallery). SVG not recommended.
+extensions:
+  - jpg
+  - jpeg
+  - png
+  - webp
+  - gif
+
+# Path of the SQLite file, relative to Grav's root.
+# Outside cache/ to survive a cache clear.
+db_path: 'user/data/gallery-index/gallery.sqlite'
+
+# --- Public feed (block 2) ---
+# Route intercepted by the plugin to serve the gallery's paginated JSON.
+feed_route: '/gallery-feed.json'
+# Default batch size and ceiling (images per request).
+batch_size: 80
+max_batch_size: 200
+# Sort criterion of the global gallery:
+#   date   → articles' publication date;
+#   folder → manual page order in the admin (folder prefixes 01., 02.…).
+#            A drag and drop in the admin updates the index automatically.
+sort_field: 'date'
+# Initial order: asc | desc | random (visitors can change it if the control
+# is shown). Old recent/oldest values accepted as aliases.
+default_sort: 'desc'
+# Show the visitor "sort by" control (on/off).
+show_sort_control: true
+
+# --- Hide an image with a TAG ---
+# Tags to add to the `tags` key of the image's `.meta.yaml` (admin metadata
+# editor, "Tags" field) to remove it from a gallery. Resolved at indexing
+# time; the article is reindexed automatically when the metadata is saved
+# from the admin. Empty = disabled.
+exclude_tag_article: 'nogal'
+exclude_tag_global: 'nogalinf'
+
+# --- Thumbnails (pre-generated at indexing time) ---
+# Target thumbnail width (px). Changing this value requires a reindex.
+thumb_width: 500
+
+# --- Front-end layout (justified gallery) ---
+# Target row height (px) and spacing between images (px).
+target_row_height: 220
+gap: 6
+
+# --- Lightbox PhotoSwipe ---
+# (the link to the article lives in the info panel: "Article: …")
+loop: false
+# Info panel (sidebar): shows the keys of the `image.jpg.meta.yaml` files in
+# the lightbox (one block per key, class `galinf-meta-<key>`), and hosts the
+# comments. false = panel AND endpoint disabled.
+show_info_sidebar: true
+# Route of the public metadata endpoint (read on demand by the lightbox,
+# through Grav's native media API — nothing is stored in the index).
+meta_route: '/gallery-meta.json'
+# Panel content: editorial .meta.yaml keys (title, description, prompt…)
+# and/or technical EXIF keys (camera, exposure, ISO…).
+sidebar_show_meta: true
+sidebar_show_exif: false
+# States when the lightbox opens. If the matching visitor button (btn_info /
+# btn_strip below) is disabled, the state is ENFORCED for everyone;
+# otherwise just a default: the visitor's (remembered) choice takes
+# precedence.
+sidebar_default_open: false
+strip_default_open: true
+# Lightbox top bar buttons (à la carte).
+btn_slideshow: true
+btn_rotate: true
+btn_download: true
+btn_fullscreen: true
+btn_strip: true
+btn_info: true
+
+# --- Comments (one Flex object per comment — YAML files under
+# user/data/galinf/comments/, moderation in the admin; the SQLite index only
+# keeps a cache of them: counter + date of the last one) ---
+comments_enabled: false
+# Pre-moderation: comments wait for an admin's approval.
+comments_moderation: false
+# Who can comment: anonymous (free nickname) | members (logged in) | admins.
+comments_who: 'anonymous'
+# Nickname required for anonymous visitors (otherwise "Anon").
+comments_require_name: false
+# Maximum length of a visitor's comment, in characters (50 to 1000).
+comments_max_length: 300
+# Characters-left counter: always shown (true), or only once less than 20 %
+# of the limit is left (false).
+comments_counter_always: false
+# Anti-bot check for visitors who are not logged in: galinf (built-in sum
+# question) | cap (Cap proof of work, invisible) | turnstile (Cloudflare
+# Turnstile) | recaptcha (Google reCAPTCHA) | none (honeypot and rate limit
+# only). cap, turnstile and recaptcha go through the Form plugin, with its
+# settings (keys and reCAPTCHA version are entered there).
+comments_captcha: 'galinf'
+# Comments the whole site accepts per day, from visitors and members
+# (moderators are not counted): 1 to 10000. Beyond it, posting is refused
+# until the next day. comments_daily_unlimited: true lifts the cap.
+comments_daily_max: 20
+comments_daily_unlimited: false
+# Route of the posting endpoint (POST).
+comment_route: '/gallery-comment.json'
+
+# --- Virtualization / performance ---
+# Height rendered above/below the viewport (px).
+preload_margin: 500
+# Metadata buffer: number of images (light JSON, not the image files)
+# preloaded ahead of the scroll. Avoids getting stuck at the bottom of the
+# page (End key, fast scrolling). 0 = progressively load the WHOLE index in
+# the background.
+metadata_lookahead: 800

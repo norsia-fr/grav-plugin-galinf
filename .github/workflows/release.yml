@@ -1,0 +1,39 @@
+name: Release
+
+# Publishes the GitHub release of a version as soon as its tag is pushed
+# (tags without "v": 2.0.0). Notes: that version's section of CHANGELOG.md,
+# with Grav's list markers turned into headings. GitHub attaches the
+# "Source code" archives itself (Direct Install and GPM use them).
+on:
+  push:
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Release notes from CHANGELOG.md
+        run: |
+          awk -v v="# v${GITHUB_REF_NAME}" '
+            $0 == v { on = 1; next }
+            on && /^# v/ { exit }
+            on && /^## / { next }
+            on && /\[\]\(#new\)/ { print "### New"; next }
+            on && /\[\]\(#improved\)/ { print "### Improved"; next }
+            on && /\[\]\(#bugfix\)/ { print "### Bugfix"; next }
+            on { sub(/^    /, ""); print }
+          ' CHANGELOG.md > RELEASE_NOTES.md
+          [ -s RELEASE_NOTES.md ] || echo "Version ${GITHUB_REF_NAME}" > RELEASE_NOTES.md
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --verify-tag \
+            --title "$GITHUB_REF_NAME" --notes-file RELEASE_NOTES.md

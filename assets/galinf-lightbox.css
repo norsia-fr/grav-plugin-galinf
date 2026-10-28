@@ -1,0 +1,358 @@
+/* Galinf — PhotoSwipe lightbox UI (lightbox work).
+   Step 1: structured top bar + fullscreen + download,
+   + caption styles (moved from galinf-gallery.css). */
+
+/* Top bar: a real bar (gradient background), counter on the left (native),
+   buttons grouped on the right. */
+.pswp__top-bar {
+    background: linear-gradient(rgba(0, 0, 0, .45), transparent);
+}
+
+/* Left group of the top bar: counter, play, delay — the last one's auto
+   margin pushes every other button to the right. */
+.pswp__galinf-delay { margin-inline-end: auto; }
+
+/* Slideshow: play/pause toggle icon. */
+.pswp__button--galinf-play .galinf-ic-pause { display: none; }
+.pswp__button--galinf-play.galinf-playing .galinf-ic-pause { display: block; }
+.pswp__button--galinf-play.galinf-playing .galinf-ic-play { display: none; }
+
+/* Delay picker: small clickable label + dropdown menu. */
+.pswp__galinf-delay {
+    position: relative;
+    width: auto;
+    min-width: 44px;
+    height: 60px;
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    pointer-events: auto;
+}
+/* Round badge: delay in the center, progress ring around it (fills as time
+   passes on the image during the slideshow). */
+.galinf-delay-badge {
+    position: relative;
+    width: 34px;
+    height: 34px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: .85;
+}
+.pswp__galinf-delay:hover .galinf-delay-badge { opacity: 1; }
+.galinf-delay-label {
+    font-size: 12px;
+    line-height: 1;
+    color: var(--pswp-icon-color, #fff);
+    text-shadow: 1px 1px 3px rgba(0, 0, 0, .5);
+}
+.galinf-delay-ring {
+    position: absolute;
+    inset: 0;
+    transform: rotate(-90deg);   /* progress starting at the top */
+}
+.galinf-delay-ring circle { fill: none; stroke-width: 2.5; }
+.galinf-ring-track { stroke: rgba(255, 255, 255, .28); }
+.galinf-ring-fg {
+    stroke: #fff;
+    stroke-linecap: round;
+}
+.galinf-delay-pop {
+    display: none;
+    position: absolute;
+    top: 52px;
+    left: 0;
+    background: rgba(20, 20, 20, .95);
+    border-radius: 6px;
+    padding: 4px 0;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, .5);
+}
+.pswp__galinf-delay.galinf-open .galinf-delay-pop { display: block; }
+.galinf-delay-opt {
+    display: block;
+    padding: 7px 18px;
+    font-size: 13px;
+    color: #fff;
+    white-space: nowrap;
+    cursor: pointer;
+}
+.galinf-delay-opt:hover { background: rgba(255, 255, 255, .15); }
+.galinf-delay-cur { font-weight: bold; }
+
+/* Rotation: smooth transition (only affects our transform on the img,
+   PhotoSwipe applies zoom/pan on the parent container). */
+.pswp__img { transition: transform .2s ease; }
+
+/* Fullscreen icon: toggles enter/exit depending on the state. */
+.pswp__button--galinf-fullscreen .galinf-fs-exit { display: none; }
+.pswp__button--galinf-fullscreen.galinf-fs-on .galinf-fs-exit { display: block; }
+.pswp__button--galinf-fullscreen.galinf-fs-on .galinf-fs-enter { display: none; }
+
+/* Info panel: right sidebar (desktop) / bottom sheet (mobile).
+   One block per .meta.yaml key — the theme can style it through
+   .galinf-meta-<key> (e.g. .galinf-meta-title). */
+/* NB: the <aside> is a direct child of .pswp, added AFTER the scroll-wrap
+   that contains the top bar → its z-index does not compete with the top
+   bar's (different stacking contexts). It therefore starts UNDER the top
+   bar (top: 60px) so as never to cover its buttons. */
+.pswp__galinf-sidebar {
+    position: absolute;
+    top: 60px; right: 0; bottom: 0;
+    width: 320px;
+    background: rgba(18, 18, 18, .96);
+    color: #ddd;
+    transform: translateX(100%);
+    transition: transform .25s ease;
+    pointer-events: auto;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+}
+.pswp__galinf-sidebar.galinf-sb-open { transform: translateX(0); }
+.galinf-sb-inner { position: relative; padding: 16px 20px 20px; }
+
+/* Panel open: the "next" arrow shifts to stay reachable. */
+.pswp.galinf-sb-active .pswp__button--arrow--next {
+    right: 320px;
+    transition: right .25s ease;
+}
+
+/* Panel close button. */
+.galinf-sb-close {
+    position: absolute;
+    top: 8px;
+    right: 10px;
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: #aaa;
+    font-size: 26px;
+    line-height: 34px;
+    cursor: pointer;
+}
+.galinf-sb-close:hover { color: #fff; }
+
+/* Header: file name, source article, dimensions. */
+.galinf-sb-head {
+    margin: 0 24px 16px 0;
+    padding-bottom: 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, .12);
+}
+.galinf-sb-file {
+    font-size: 14px;
+    font-weight: bold;
+    color: #fff;
+    overflow-wrap: break-word;
+}
+.galinf-sb-article { font-size: 13px; color: #bbb; margin-top: 3px; }
+.galinf-sb-article a {
+    color: #9ecbff;
+    text-decoration: underline;
+}
+.galinf-sb-article a:hover { color: #c4e0ff; }
+.galinf-sb-dims    { font-size: 12px; color: #8f8f8f; margin-top: 3px; }
+
+.galinf-meta { margin: 0 0 14px; }
+.galinf-meta-label {
+    display: block;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: #8f8f8f;
+    margin-bottom: 2px;
+}
+.galinf-meta-value {
+    font-size: 14px;
+    line-height: 1.45;
+    color: #e8e8e8;
+    overflow-wrap: break-word;
+}
+/* List (e.g. `prompts:`): one line per item, prefixed with a dash. */
+.galinf-meta-line { padding-left: 1em; text-indent: -1em; }
+.galinf-meta-line::before { content: '- '; }
+.galinf-meta-line + .galinf-meta-line { margin-top: 2px; }
+.galinf-sb-none { font-size: 13px; color: #8f8f8f; font-style: italic; }
+
+.galinf-sb-comments {
+    margin-top: 26px;
+    padding-top: 14px;
+    border-top: 1px solid rgba(255, 255, 255, .12);
+}
+.galinf-sb-comments h3 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: #aaa;
+    margin: 0 0 8px;
+}
+
+/* Comments: list. */
+.galinf-comment {
+    margin: 0 0 14px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid rgba(255, 255, 255, .08);
+}
+.galinf-comment-head { display: flex; justify-content: space-between; gap: 8px; }
+.galinf-comment-name { font-size: 13px; font-weight: bold; color: #fff; }
+.galinf-comment-date { font-size: 11px; color: #8f8f8f; white-space: nowrap; }
+.galinf-comment-text {
+    margin-top: 4px;
+    font-size: 13px;
+    line-height: 1.45;
+    color: #ddd;
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+}
+/* Comments: form (standalone, no external CSS dependency).
+   Folded block with an ANIMATED opening in pure CSS: grid-template-rows
+   0fr→1fr (the inner wrapper hides the overflow during the transition; on a
+   very old browser, the transition is simply ignored → instant toggle,
+   still working). */
+.galinf-comment-fields {
+    display: grid;
+    grid-template-rows: 0fr;
+    transition: grid-template-rows .25s ease;
+}
+.galinf-comment-fields.galinf-open { grid-template-rows: 1fr; }
+.galinf-comment-fields-in { min-height: 0; overflow: hidden; }
+
+.galinf-comment-add,
+.galinf-comment-send {
+    display: block;
+    padding: 6px 14px;
+    font-size: 13px;
+    color: #ddd;
+    background: rgba(255, 255, 255, .08);
+    border: 1px solid rgba(255, 255, 255, .25);
+    border-radius: 4px;
+    cursor: pointer;
+}
+.galinf-comment-add { width: 100%; margin: 0 0 10px; text-align: center; }
+.galinf-comment-add:hover,
+.galinf-comment-add.galinf-on,
+.galinf-comment-send:hover { background: rgba(255, 255, 255, .18); color: #fff; }
+.galinf-comment-send:disabled { opacity: .5; cursor: default; }
+.galinf-comment-fields input[type="text"],
+.galinf-comment-fields textarea {
+    display: block;
+    width: 100%;
+    margin: 0 0 8px;
+    padding: 7px 9px;
+    font-size: 13px;
+    color: #eee;
+    background: rgba(255, 255, 255, .07);
+    border: 1px solid rgba(255, 255, 255, .2);
+    border-radius: 4px;
+    box-sizing: border-box;
+    resize: vertical;
+}
+.galinf-comment-fields input:focus,
+.galinf-comment-fields textarea:focus { outline: none; border-color: rgba(255, 255, 255, .5); }
+.galinf-counter { font-size: 11px; color: #8f8f8f; text-align: right; margin: -4px 0 8px; }
+.galinf-captcha { display: block; font-size: 13px; color: #ccc; margin: 0 0 8px; }
+.galinf-captcha input { display: inline-block; width: 70px; margin-left: 6px; padding: 4px 8px;
+    color: #eee; background: rgba(255,255,255,.07);
+    border: 1px solid rgba(255,255,255,.2); border-radius: 4px; }
+.galinf-captcha-widget { margin: 0 0 8px; }
+.galinf-captcha-widget:empty { margin: 0; }
+.galinf-comment-msg { font-size: 12px; color: #9ecbff; min-height: 1em; margin: 0 0 6px; }
+
+/* Honeypot: off screen (humans never see it). */
+.galinf-hp { position: absolute !important; left: -9999px !important; width: 10px; height: 10px; opacity: 0; }
+
+/* "i" button: highlighted when the panel is open. */
+.pswp__button--galinf-info.galinf-sb-on { opacity: 1; }
+.pswp__button--galinf-info.galinf-sb-on .pswp__icn { fill: #fff; filter: drop-shadow(0 0 3px rgba(255,255,255,.6)); }
+
+/* Thumbnail strip (bottom), virtualized. Pushed/narrowed by the sidebar. */
+.pswp__galinf-strip {
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    height: 78px;
+    background: rgba(15, 15, 15, .85);
+    transform: translateY(100%);
+    transition: transform .25s ease, right .25s ease;
+    pointer-events: auto;
+}
+.pswp__galinf-strip.galinf-strip-open { transform: translateY(0); }
+.pswp.galinf-sb-active .pswp__galinf-strip { right: 320px; }
+
+.galinf-strip-scroll {
+    height: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255,255,255,.3) transparent;
+}
+.galinf-strip-scroll::-webkit-scrollbar { height: 6px; }
+.galinf-strip-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,.3); border-radius: 3px; }
+.galinf-strip-run { position: relative; height: 100%; }
+
+.galinf-th {
+    position: absolute;
+    top: 6px; left: 4px;
+    width: 84px; height: 58px;
+    object-fit: cover;
+    border-radius: 3px;
+    cursor: pointer;
+    opacity: .65;
+    border: 2px solid transparent;
+    transition: opacity .15s ease;
+}
+.galinf-th:hover { opacity: 1; }
+.galinf-th-cur {
+    opacity: 1;
+    border-color: #fff;
+}
+
+/* Thumbnails button: highlighted when the strip is visible. */
+.pswp__button--galinf-thumbs.galinf-strip-on .pswp__icn { fill: #fff; filter: drop-shadow(0 0 3px rgba(255,255,255,.6)); }
+
+/* Mobile / narrow screen: sliding bottom sheet. */
+@media (max-width: 699px) {
+    .pswp__galinf-sidebar {
+        top: auto;
+        left: 0; right: 0; bottom: 0;
+        width: auto;
+        height: 42vh;
+        transform: translateY(100%);
+        border-top: 1px solid rgba(255, 255, 255, .15);
+    }
+    .pswp__galinf-sidebar.galinf-sb-open { transform: translateY(0); }
+    .galinf-sb-inner { padding: 16px 18px; }
+    /* Bottom sheet: the arrow stays in place, the close button moves up,
+       the info sheet takes priority over the strip (same area). */
+    .pswp.galinf-sb-active .pswp__button--arrow--next { right: 0; }
+    .pswp.galinf-sb-active .pswp__galinf-strip { right: 0; transform: translateY(100%); }
+    .galinf-sb-close { top: 8px; }
+}
+
+/* ---- compact top bar on narrow screens (step 7d) ----
+   PhotoSwipe: 50 px wide buttons, 14 px counter with a 20 px margin — at
+   320 px, 7 buttons + counter overflow and overlap. Things are tightened
+   progressively; everything stays visible down to ~360 px. */
+@media (max-width: 480px) {
+    .pswp__button { width: 42px; }
+    .pswp__icn { left: 5px; }
+    .pswp__counter {
+        margin-inline-start: 10px;
+        font-size: 13px;
+        white-space: nowrap;    /* never on two lines */
+    }
+    .pswp__galinf-delay { min-width: 38px; }
+}
+@media (max-width: 360px) {
+    .pswp__button { width: 36px; }
+    .pswp__icn { left: 2px; }
+    .pswp__counter { margin-inline-start: 6px; font-size: 11px; }
+    .pswp__galinf-delay { min-width: 34px; }
+    .galinf-delay-badge { width: 30px; height: 30px; }
+    .galinf-delay-label { font-size: 10px; }
+}
+/* Last resort (very narrow, or a long counter such as "8,686 / 25,000"):
+   the delay badge disappears — the slideshow stays usable, the delay is set
+   on a wider screen. */
+@media (max-width: 340px) {
+    .pswp__galinf-delay { display: none; }
+}

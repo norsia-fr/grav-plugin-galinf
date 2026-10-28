@@ -1,0 +1,127 @@
+.galinf-gallery { position: relative; width: 100%; }
+.galinf-runway  { position: relative; width: 100%; }
+
+/* "Sort by" control. Colors INHERITED from the host theme (its text
+   contrasts with its background by definition): readable on light as well
+   as dark, with no hard-coded color. */
+.galinf-controls {
+    margin: 0 0 1rem;
+    display: flex;
+    justify-content: flex-end;
+}
+.galinf-sort-label {
+    font-size: .9rem;
+    color: inherit;
+    opacity: .85;
+}
+.galinf-sort {
+    margin-left: .4rem;
+    padding: .25rem .5rem;
+    font-size: .9rem;
+    color: inherit;
+    background: transparent;
+    border: 1px solid rgba(127, 127, 127, .55);
+    border-radius: 4px;
+}
+/* Dark page background (class set by the JS after measuring the luminance
+   of the actual background): the native OPEN dropdown switches to dark
+   rendering — without color-scheme, the list would stay white with
+   unreadable light text. */
+.galinf-gallery.galinf-dark .galinf-sort { color-scheme: dark; }
+.galinf-gallery.galinf-dark .galinf-sort option { background: #222; color: #eee; }
+
+.galinf-tile {
+    position: absolute;
+    top: 0; left: 0;
+    overflow: hidden;
+    background: #ececec;
+    will-change: transform;
+    border-radius: 2px;
+    cursor: pointer;
+}
+.galinf-tile img {
+    width: 100%; height: 100%;
+    display: block;
+    /* explicit margin: the host theme's typography (e.g. Tailwind
+       Typography, `.prose img { margin: 2em 0 }`) must never shift the
+       image in its tile. */
+    margin: 0;
+    object-fit: cover;
+    background: #ececec;
+    opacity: 1;
+    transition: opacity .25s ease;   /* new image: fades in */
+}
+
+/* While loading (recycling): the old image is hidden INSTANTLY
+   (transition: none) → an image already seen is never shown. */
+.galinf-tile.galinf-loading img {
+    opacity: 0;
+    transition: none;
+}
+
+/* Spinner centered in the cell being loaded. */
+.galinf-tile.galinf-loading::after {
+    content: '';
+    position: absolute;
+    top: 50%; left: 50%;
+    width: 22px; height: 22px;
+    margin: -11px 0 0 -11px;
+    border: 2px solid rgba(0, 0, 0, .15);
+    border-top-color: rgba(0, 0, 0, .45);
+    border-radius: 50%;
+    animation: galinf-spin .7s linear infinite;
+}
+@keyframes galinf-spin { to { transform: rotate(360deg); } }
+
+/* Comment count badge (top-right corner of the thumbnail). */
+.galinf-count {
+    position: absolute;
+    top: 5px; right: 5px;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 6px;
+    border-radius: 10px;
+    background: rgba(0, 0, 0, .65);
+    color: #fff;
+    font-size: 11px;
+    line-height: 20px;
+    text-align: center;
+    pointer-events: none;
+}
+
+/* Bottom-of-page progress bar ("more images left" indicator). */
+.galinf-status .galinf-bar {
+    display: block;
+    width: min(320px, 60%);
+    height: 4px;
+    margin: .5rem auto 0;
+    background: rgba(127, 127, 127, .18);
+    border-radius: 2px;
+    overflow: hidden;
+}
+.galinf-status .galinf-bar-fill {
+    display: block;
+    height: 100%;
+    background: #8a8a8a;
+    border-radius: 2px;
+    transition: width .3s ease;
+}
+/* Indeterminate variant (if the total is not known yet). */
+.galinf-bar-indet {
+    width: 30%;
+    animation: galinf-indet 1.1s linear infinite;
+}
+@keyframes galinf-indet {
+    from { transform: translateX(-110%); }
+    to   { transform: translateX(440%); }
+}
+
+/* Discreet loading indicator (in the flow, under the gallery). */
+.galinf-status {
+    margin: 0;
+    padding: 1rem 0;
+    min-height: 1.2rem;
+    text-align: center;
+    font-size: .85rem;
+    color: var(--galinf-muted, #999);
+}

@@ -1,0 +1,6 @@
+# Kept in the repository (the README shows the screenshots; .github holds
+# the release workflow), left out of the release archives: GitHub "Source
+# code" zip, Direct Install and GPM.
+/screenshots export-ignore
+/.github export-ignore
+/.gitattributes export-ignore

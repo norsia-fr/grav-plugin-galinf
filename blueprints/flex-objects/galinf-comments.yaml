@@ -1,0 +1,165 @@
+title: PLUGIN_GALINF.COMMENTS_DIRECTORY
+description: PLUGIN_GALINF.COMMENTS_DIRECTORY_HELP
+type: flex-objects
+
+# Flex directory declared BY the galinf plugin (FlexRegisterEvent event).
+# Storage: ONE small YAML file per comment, spread over subfolders by key
+# prefix ({KEY:2}), under user-data:// (not served by the web server).
+# The route/file/approved/date fields are copied into the Flex index
+# (CommentIndex class): sorted admin list and SQLite counters recomputed
+# without ever loading the objects.
+
+config:
+  admin:
+    router:
+      path: '/galinf-comments'
+
+    menu:
+      list:
+        route: '/galinf-comments'
+        # "Gallery comments": avoids clashing with other comment plugins in
+        # the admin sidebar.
+        title: PLUGIN_GALINF.COMMENTS_DIRECTORY
+        icon: fa-comments
+        authorize: ['admin.galinf-comments.list', 'admin.super']
+        priority: 2
+
+    template: default
+
+    permissions:
+      admin.galinf-comments:
+        type: crudpl
+        label: PLUGIN_GALINF.COMMENTS_DIRECTORY
+
+    list:
+      title: text
+      per_page: 20
+      options:
+        per_page: 20
+        order:
+          by: date
+          dir: desc
+      fields:
+        # NB: the SPA reads the column label from `field.label` (the
+        # top-level `label:` is ignored by Admin Next).
+        approved:
+          field:
+            type: toggle
+            label: PLUGIN_GALINF.COMMENT_APPROVED
+          width: 8
+        date:
+          field:
+            type: date
+            label: PLUGIN_GALINF.COMMENT_DATE
+        name:
+          link: edit
+          field:
+            label: PLUGIN_GALINF.COMMENT_NAME
+        text:
+          link: edit
+          field:
+            label: PLUGIN_GALINF.COMMENT_TEXT
+        url:
+          # VIRTUAL property (CommentObject): clickable link to the
+          # article's page. Sorting this column reads the index (url key =
+          # route, see CommentIndex) — no object loaded.
+          field:
+            type: url
+            label: PLUGIN_GALINF.COMMENT_PAGE
+        image_url:
+          # Virtual property: direct link to the image file (served by Grav
+          # on the page route). Sorted through the index (image_url key).
+          field:
+            type: url
+            label: PLUGIN_GALINF.COMMENT_IMAGE
+
+    edit:
+      title:
+        # Admin Next interpolation: {{ object.x }} or {{ object.x ?? 'fallback' }}
+        # ONLY (no Twig expression — `?:` would be displayed as is).
+        template: "{{ object.name ?? 'Anon' }} — {{ object.file }}"
+
+  site:
+    hidden: true
+
+  data:
+    object: 'Grav\Plugin\Galinf\Flex\CommentObject'
+    collection: 'Grav\Common\Flex\Types\Generic\GenericCollection'
+    index: 'Grav\Plugin\Galinf\Flex\CommentIndex'
+    storage:
+      # FolderStorage (one FOLDER per comment, comment.yaml file inside,
+      # sharded by {KEY:2}): the only core storage whose scan handles prefix
+      # subfolders. FileStorage scans flat and would ignore a prefixed
+      # pattern.
+      class: 'Grav\Framework\Flex\Storage\FolderStorage'
+      options:
+        formatter:
+          class: 'Grav\Framework\File\Formatter\YamlFormatter'
+        folder: 'user-data://galinf/comments'
+        pattern: '{FOLDER}/{KEY:2}/{KEY}/{FILE}{EXT}'
+        file: comment
+        indexed: true
+    search:
+      options:
+        contains: 1
+      fields:
+        - name
+        - text
+        - route
+        - file
+
+form:
+  validation: loose
+  fields:
+    preview:
+      # The plugin's custom field (admin-next/fields/galinf-comment-preview.js):
+      # preview of the commented image (persistent thumbnail if available,
+      # clickable to the original). Without a value: takes no part in saving.
+      type: galinf-comment-preview
+      label: PLUGIN_GALINF.COMMENT_PREVIEW
+
+    route:
+      type: text
+      label: PLUGIN_GALINF.COMMENT_ROUTE
+      help: PLUGIN_GALINF.COMMENT_ROUTE_HELP
+      validate:
+        required: true
+        max: 255
+
+    file:
+      type: text
+      label: PLUGIN_GALINF.COMMENT_FILE
+      help: PLUGIN_GALINF.COMMENT_FILE_HELP
+      validate:
+        required: true
+        max: 255
+
+    name:
+      type: text
+      label: PLUGIN_GALINF.COMMENT_NAME
+      validate:
+        max: 60
+
+    text:
+      type: textarea
+      label: PLUGIN_GALINF.COMMENT_TEXT
+      rows: 5
+      validate:
+        required: true
+        max: 2000
+
+    date:
+      type: text
+      label: PLUGIN_GALINF.COMMENT_DATE_ISO
+      readonly: true
+
+    approved:
+      type: toggle
+      label: PLUGIN_GALINF.COMMENT_APPROVED
+      highlight: 1
+      default: 0
+      options:
+        1: PLUGIN_ADMIN.YES
+        0: PLUGIN_ADMIN.NO
+      validate:
+        type: bool

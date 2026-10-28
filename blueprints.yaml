@@ -1,0 +1,463 @@
+name: Galinf — Infinite gallery
+slug: galinf
+type: plugin
+version: 2.0.0
+description: One endlessly scrolling gallery of the images of the pages you select, even tens of thousands, with a PhotoSwipe lightbox and optional comments.
+icon: images
+author:
+  name: norsia
+  url: https://github.com/norsia-fr
+homepage: https://github.com/norsia-fr/grav-plugin-galinf
+bugs: https://github.com/norsia-fr/grav-plugin-galinf/issues
+docs: https://github.com/norsia-fr/grav-plugin-galinf/blob/main/README.md
+keywords: gallery, infinite scroll, images, photos, lightbox, photoswipe, justified, comments
+license: MIT
+
+compatibility:
+  grav: ['2.0']
+
+dependencies:
+  - { name: grav, version: '>=2.0.0' }
+  - { name: shortcode-core }
+
+form:
+  validation: loose
+  fields:
+    enabled:
+      type: toggle
+      label: PLUGIN_ADMIN.PLUGIN_STATUS
+      highlight: 1
+      default: 1
+      options:
+        1: PLUGIN_ADMIN.ENABLED
+        0: PLUGIN_ADMIN.DISABLED
+      validate:
+        type: bool
+
+    # Native Admin Next tabs (like the api and login plugins). The tabs/tab
+    # containers do not enter the configuration keys: the fields keep their
+    # flat names (plugins.galinf.<field>).
+    tabs:
+      type: tabs
+      fields:
+        tab_general:
+          type: tab
+          title: PLUGIN_GALINF.TAB_GENERAL
+          fields:
+            section_sources:
+              type: section
+              title: PLUGIN_GALINF.SECTION_SOURCES
+              underline: true
+
+            templates:
+              type: array
+              label: PLUGIN_GALINF.TEMPLATES
+              help: PLUGIN_GALINF.TEMPLATES_HELP
+              value_only: true
+              placeholder_value: item
+
+            roots:
+              type: array
+              label: PLUGIN_GALINF.ROOTS
+              help: PLUGIN_GALINF.ROOTS_HELP
+              value_only: true
+              placeholder_value: /blog
+
+            extensions:
+              type: array
+              label: PLUGIN_GALINF.EXTENSIONS
+              help: PLUGIN_GALINF.EXTENSIONS_HELP
+              value_only: true
+              placeholder_value: jpg
+
+        tab_gallery:
+          type: tab
+          title: PLUGIN_GALINF.TAB_GALLERY
+          fields:
+            section_gallery:
+              type: section
+              title: PLUGIN_GALINF.SECTION_DISPLAY
+              underline: true
+
+            batch_size:
+              type: number
+              label: PLUGIN_GALINF.BATCH_SIZE
+              help: PLUGIN_GALINF.BATCH_SIZE_HELP
+              default: 80
+              validate:
+                type: int
+                min: 10
+                max: 200
+
+            sort_field:
+              type: select
+              label: PLUGIN_GALINF.SORT_FIELD
+              help: PLUGIN_GALINF.SORT_FIELD_HELP
+              default: date
+              options:
+                date: PLUGIN_GALINF.SORT_FIELD_DATE
+                folder: PLUGIN_GALINF.SORT_FIELD_FOLDER
+
+            default_sort:
+              type: select
+              label: PLUGIN_GALINF.DEFAULT_SORT
+              help: PLUGIN_GALINF.DEFAULT_SORT_HELP
+              default: desc
+              options:
+                desc: PLUGIN_GALINF.SORT_DESC
+                asc: PLUGIN_GALINF.SORT_ASC
+                random: PLUGIN_GALINF.SORT_RANDOM
+
+            show_sort_control:
+              type: toggle
+              label: PLUGIN_GALINF.SHOW_SORT_CONTROL
+              help: PLUGIN_GALINF.SHOW_SORT_CONTROL_HELP
+              default: 1
+              options:
+                1: PLUGIN_ADMIN.ENABLED
+                0: PLUGIN_ADMIN.DISABLED
+              validate:
+                type: bool
+
+            target_row_height:
+              type: number
+              label: PLUGIN_GALINF.TARGET_ROW_HEIGHT
+              default: 220
+              validate:
+                type: int
+                min: 80
+                max: 600
+
+            gap:
+              type: number
+              label: PLUGIN_GALINF.GAP
+              default: 6
+              validate:
+                type: int
+                min: 0
+                max: 40
+
+            section_thumbs:
+              type: section
+              title: PLUGIN_GALINF.SECTION_THUMBS
+              underline: true
+
+            thumb_width:
+              type: number
+              label: PLUGIN_GALINF.THUMB_WIDTH
+              help: PLUGIN_GALINF.THUMB_WIDTH_HELP
+              default: 500
+              validate:
+                type: int
+                min: 100
+                max: 1200
+
+            thumb_width_warning:
+              # Admin Next NATIVE `display` type: the content's HTML is rendered
+              # as is (here a translation key, the HTML lives in languages/).
+              # Inline styles (Tailwind's red utilities are purged from the
+              # admin2 bundle); colors readable on light and dark themes.
+              type: display
+              content: PLUGIN_GALINF.THUMB_WIDTH_WARNING
+
+            section_exclude:
+              type: section
+              title: PLUGIN_GALINF.SECTION_EXCLUDE
+              underline: true
+
+            exclude_tags_help:
+              type: display
+              content: PLUGIN_GALINF.EXCLUDE_TAGS_INTRO
+
+            exclude_tags_reindex_warning:
+              # Native `display` type (the content's HTML is rendered as is);
+              # inline styles because Tailwind's amber utilities are purged
+              # from the admin2 bundle.
+              type: display
+              content: PLUGIN_GALINF.EXCLUDE_TAGS_WARNING
+
+            exclude_tag_article:
+              type: text
+              label: PLUGIN_GALINF.EXCLUDE_TAG_ARTICLE
+              help: PLUGIN_GALINF.EXCLUDE_TAG_ARTICLE_HELP
+              default: nogal
+              placeholder: nogal
+
+            exclude_tag_global:
+              type: text
+              label: PLUGIN_GALINF.EXCLUDE_TAG_GLOBAL
+              help: PLUGIN_GALINF.EXCLUDE_TAG_GLOBAL_HELP
+              default: nogalinf
+              placeholder: nogalinf
+
+            section_perf:
+              type: section
+              title: PLUGIN_GALINF.SECTION_PERF
+              underline: true
+
+            preload_margin:
+              type: number
+              label: PLUGIN_GALINF.PRELOAD_MARGIN
+              help: PLUGIN_GALINF.PRELOAD_MARGIN_HELP
+              default: 500
+              validate:
+                type: int
+                min: 100
+                max: 2000
+
+            metadata_lookahead:
+              type: number
+              label: PLUGIN_GALINF.METADATA_LOOKAHEAD
+              help: PLUGIN_GALINF.METADATA_LOOKAHEAD_HELP
+              default: 800
+              validate:
+                type: int
+                min: 0
+
+        tab_lightbox:
+          type: tab
+          title: PLUGIN_GALINF.TAB_LIGHTBOX
+          fields:
+            section_lightbox:
+              type: section
+              title: PLUGIN_GALINF.SECTION_BEHAVIOR
+              underline: true
+
+            loop:
+              type: toggle
+              label: PLUGIN_GALINF.LOOP
+              default: 0
+              options:
+                1: PLUGIN_ADMIN.ENABLED
+                0: PLUGIN_ADMIN.DISABLED
+              validate:
+                type: bool
+
+            show_info_sidebar:
+              type: toggle
+              label: PLUGIN_GALINF.SHOW_INFO_SIDEBAR
+              help: PLUGIN_GALINF.SHOW_INFO_SIDEBAR_HELP
+              default: 1
+              options:
+                1: PLUGIN_ADMIN.ENABLED
+                0: PLUGIN_ADMIN.DISABLED
+              validate:
+                type: bool
+
+            sidebar_show_meta:
+              type: toggle
+              label: PLUGIN_GALINF.SIDEBAR_SHOW_META
+              help: PLUGIN_GALINF.SIDEBAR_SHOW_META_HELP
+              default: 1
+              options:
+                1: PLUGIN_ADMIN.ENABLED
+                0: PLUGIN_ADMIN.DISABLED
+              validate:
+                type: bool
+
+            sidebar_show_exif:
+              type: toggle
+              label: PLUGIN_GALINF.SIDEBAR_SHOW_EXIF
+              help: PLUGIN_GALINF.SIDEBAR_SHOW_EXIF_HELP
+              default: 0
+              options:
+                1: PLUGIN_ADMIN.ENABLED
+                0: PLUGIN_ADMIN.DISABLED
+              validate:
+                type: bool
+
+            sidebar_default_open:
+              type: toggle
+              label: PLUGIN_GALINF.SIDEBAR_DEFAULT_OPEN
+              help: PLUGIN_GALINF.SIDEBAR_DEFAULT_OPEN_HELP
+              default: 0
+              options:
+                1: PLUGIN_ADMIN.ENABLED
+                0: PLUGIN_ADMIN.DISABLED
+              validate:
+                type: bool
+
+            strip_default_open:
+              type: toggle
+              label: PLUGIN_GALINF.STRIP_DEFAULT_OPEN
+              help: PLUGIN_GALINF.STRIP_DEFAULT_OPEN_HELP
+              default: 1
+              options:
+                1: PLUGIN_ADMIN.ENABLED
+                0: PLUGIN_ADMIN.DISABLED
+              validate:
+                type: bool
+
+            section_buttons:
+              type: section
+              title: PLUGIN_GALINF.SECTION_BUTTONS
+              underline: true
+
+            btn_slideshow:
+              type: toggle
+              label: PLUGIN_GALINF.BTN_SLIDESHOW
+              help: PLUGIN_GALINF.BTN_SLIDESHOW_HELP
+              default: 1
+              options: { 1: PLUGIN_ADMIN.ENABLED, 0: PLUGIN_ADMIN.DISABLED }
+              validate: { type: bool }
+
+            btn_rotate:
+              type: toggle
+              label: PLUGIN_GALINF.BTN_ROTATE
+              default: 1
+              options: { 1: PLUGIN_ADMIN.ENABLED, 0: PLUGIN_ADMIN.DISABLED }
+              validate: { type: bool }
+
+            btn_download:
+              type: toggle
+              label: PLUGIN_GALINF.BTN_DOWNLOAD
+              default: 1
+              options: { 1: PLUGIN_ADMIN.ENABLED, 0: PLUGIN_ADMIN.DISABLED }
+              validate: { type: bool }
+
+            btn_fullscreen:
+              type: toggle
+              label: PLUGIN_GALINF.BTN_FULLSCREEN
+              default: 1
+              options: { 1: PLUGIN_ADMIN.ENABLED, 0: PLUGIN_ADMIN.DISABLED }
+              validate: { type: bool }
+
+            btn_strip:
+              type: toggle
+              label: PLUGIN_GALINF.BTN_STRIP
+              help: PLUGIN_GALINF.BTN_STRIP_HELP
+              default: 1
+              options: { 1: PLUGIN_ADMIN.ENABLED, 0: PLUGIN_ADMIN.DISABLED }
+              validate: { type: bool }
+
+            btn_info:
+              type: toggle
+              label: PLUGIN_GALINF.BTN_INFO
+              help: PLUGIN_GALINF.BTN_INFO_HELP
+              default: 1
+              options: { 1: PLUGIN_ADMIN.ENABLED, 0: PLUGIN_ADMIN.DISABLED }
+              validate: { type: bool }
+
+        tab_comments:
+          type: tab
+          title: PLUGIN_GALINF.TAB_COMMENTS
+          fields:
+            section_comments:
+              type: section
+              title: PLUGIN_GALINF.SECTION_SETTINGS
+              underline: true
+
+            comments_enabled:
+              type: toggle
+              label: PLUGIN_GALINF.COMMENTS_ENABLED
+              help: PLUGIN_GALINF.COMMENTS_ENABLED_HELP
+              default: 0
+              options:
+                1: PLUGIN_ADMIN.ENABLED
+                0: PLUGIN_ADMIN.DISABLED
+              validate:
+                type: bool
+
+            comments_moderation:
+              type: toggle
+              label: PLUGIN_GALINF.COMMENTS_MODERATION
+              help: PLUGIN_GALINF.COMMENTS_MODERATION_HELP
+              default: 0
+              options:
+                1: PLUGIN_ADMIN.ENABLED
+                0: PLUGIN_ADMIN.DISABLED
+              validate:
+                type: bool
+
+            comments_who:
+              type: select
+              label: PLUGIN_GALINF.COMMENTS_WHO
+              default: anonymous
+              options:
+                anonymous: PLUGIN_GALINF.COMMENTS_WHO_ANONYMOUS
+                members: PLUGIN_GALINF.COMMENTS_WHO_MEMBERS
+                admins: PLUGIN_GALINF.COMMENTS_WHO_ADMINS
+
+            comments_require_name:
+              type: toggle
+              label: PLUGIN_GALINF.COMMENTS_REQUIRE_NAME
+              help: PLUGIN_GALINF.COMMENTS_REQUIRE_NAME_HELP
+              default: 0
+              options:
+                1: PLUGIN_ADMIN.ENABLED
+                0: PLUGIN_ADMIN.DISABLED
+              validate:
+                type: bool
+
+            comments_max_length:
+              type: number
+              label: PLUGIN_GALINF.COMMENTS_MAX_LENGTH
+              help: PLUGIN_GALINF.COMMENTS_MAX_LENGTH_HELP
+              default: 300
+              validate:
+                type: int
+                min: 50
+                max: 1000
+
+            comments_counter_always:
+              type: toggle
+              label: PLUGIN_GALINF.COMMENTS_COUNTER_ALWAYS
+              help: PLUGIN_GALINF.COMMENTS_COUNTER_ALWAYS_HELP
+              default: 0
+              options:
+                1: PLUGIN_ADMIN.ENABLED
+                0: PLUGIN_ADMIN.DISABLED
+              validate:
+                type: bool
+
+            comments_captcha:
+              type: select
+              label: PLUGIN_GALINF.COMMENTS_CAPTCHA
+              help: PLUGIN_GALINF.COMMENTS_CAPTCHA_HELP
+              default: galinf
+              options:
+                galinf: PLUGIN_GALINF.COMMENTS_CAPTCHA_GALINF
+                cap: PLUGIN_GALINF.COMMENTS_CAPTCHA_CAP
+                turnstile: PLUGIN_GALINF.COMMENTS_CAPTCHA_TURNSTILE
+                recaptcha: PLUGIN_GALINF.COMMENTS_CAPTCHA_RECAPTCHA
+                none: PLUGIN_GALINF.COMMENTS_CAPTCHA_NONE
+
+            comments_daily_max:
+              type: number
+              label: PLUGIN_GALINF.COMMENTS_DAILY_MAX
+              help: PLUGIN_GALINF.COMMENTS_DAILY_MAX_HELP
+              default: 20
+              validate:
+                type: int
+                min: 1
+                max: 10000
+
+            comments_daily_unlimited:
+              type: toggle
+              label: PLUGIN_GALINF.COMMENTS_DAILY_UNLIMITED
+              help: PLUGIN_GALINF.COMMENTS_DAILY_UNLIMITED_HELP
+              default: 0
+              options:
+                1: PLUGIN_ADMIN.ENABLED
+                0: PLUGIN_ADMIN.DISABLED
+              validate:
+                type: bool
+
+        tab_maintenance:
+          type: tab
+          title: PLUGIN_GALINF.MAINTENANCE
+          fields:
+            section_maintenance:
+              type: section
+              title: PLUGIN_GALINF.MAINTENANCE
+              underline: true
+
+            reindex_action:
+              type: galinf-reindex
+              label: PLUGIN_GALINF.REINDEX_ACTION
+              help: PLUGIN_GALINF.REINDEX_ACTION_HELP
+
+            uninstall_action:
+              type: galinf-uninstall
+              label: PLUGIN_GALINF.UNINSTALL_ACTION
+              help: PLUGIN_GALINF.UNINSTALL_ACTION_HELP
