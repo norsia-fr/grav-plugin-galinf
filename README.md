@@ -263,6 +263,12 @@ to the second: a scheduled article is indexed in advance but only appears in
 the gallery on its start date, and disappears from it on its end date,
 without reindexing.
 
+**"Unpublish child pages too"** (`cascade_unpublish`, Grav 2.2.29) is
+followed: while a parent page with that option is unpublished, by hand or by
+its dates, the images of the pages below it leave the gallery, and come back
+with it. If you turn the option off on a parent that is still unpublished,
+run **Update the index** to bring the pages below it back.
+
 ## Restricted-access pages
 
 The gallery is **public**: the feed, the thumbnails (copies served directly

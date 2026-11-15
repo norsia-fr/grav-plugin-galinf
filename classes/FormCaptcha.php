@@ -86,14 +86,20 @@ final class FormCaptcha
         }
 
         $base = rtrim((string) $grav['base_url'], '/');
-        $dir  = $base . '/' . trim((string) $grav['locator']->findResource('plugins://form/assets/captcha/cap', false), '/');
-        return [
+        $rel  = trim((string) $grav['locator']->findResource('plugins://form/assets/captcha/cap', false), '/');
+        $dir  = $base . '/' . $rel;
+        $cap  = [
             'provider' => 'cap',
             'endpoint' => $base . '/forms-cap/',   // served by the Form plugin
             'script'   => $dir . '/cap.min.js',
             'wasm'     => $dir . '/cap_wasm_bg.wasm',
             'pako'     => $dir . '/pako_inflate.min.js',
         ];
+        // Second solver of the widget since Form 9.2.0 (absent before).
+        if (is_file(GRAV_ROOT . '/' . $rel . '/hashwx.wasm')) {
+            $cap['hashwx'] = $dir . '/hashwx.wasm';
+        }
+        return $cap;
     }
 
     /**

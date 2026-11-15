@@ -132,6 +132,12 @@ class Indexer
             return false;
         }
 
+        // Under an ancestor unpublished by hand whose `cascade_unpublish`
+        // (Grav 2.2.29) hides everything below it.
+        if (self::hiddenByAncestor($page)) {
+            return false;
+        }
+
         // Scheduled publishing: the article is indexed IN ADVANCE with its
         // dates, and the gallery only serves it during its publishing period
         // (IndexDatabase::live). Otherwise, Grav's published state.
@@ -152,7 +158,7 @@ class Indexer
         // A page that cannot be reached by its address (routable: false, e.g.
         // a modular sub-page) has no place in a public gallery, and its
         // images would show up broken there.
-        if (!$page->routable()) {
+        if (!self::reachable($page)) {
             return false;
         }
 
@@ -212,14 +218,72 @@ class Indexer
     }
 
     /**
-     * Scheduled publishing dates [start, end] (timestamps or null), or null
-     * if the dates do not apply. Same rule as Grav (Page::setPublishState):
-     * `system.pages.publish_dates` setting on and no explicit `published:` in
-     * the header — an explicit value takes precedence over the dates.
+     * Publishing period [start, end] (timestamps or null) during which the
+     * page is visible, or null if no date applies: its own dates, narrowed
+     * by those of every ancestor whose `cascade_unpublish` (Grav 2.2.29)
+     * unpublishes the pages below it along with itself.
      *
      * @return array{0:?int, 1:?int}|null
      */
     public static function schedule(PageInterface $page): ?array
+    {
+        [$start, $end] = self::ownSchedule($page) ?? [null, null];
+
+        foreach (self::cascadingAncestors($page) as $ancestor) {
+            [$s, $e] = self::ownSchedule($ancestor) ?? [null, null];
+            if ($s !== null && ($start === null || $s > $start)) {
+                $start = $s;
+            }
+            if ($e !== null && ($end === null || $e < $end)) {
+                $end = $e;
+            }
+        }
+
+        return $start === null && $end === null ? null : [$start, $end];
+    }
+
+    /**
+     * Is the page under an ancestor that is unpublished WITHOUT dates (by
+     * `published: false`) and cascades? Ancestors unpublished by their dates
+     * are handled by schedule().
+     */
+    public static function hiddenByAncestor(PageInterface $page): bool
+    {
+        foreach (self::cascadingAncestors($page) as $ancestor) {
+            if (self::ownSchedule($ancestor) === null && !$ancestor->published()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Ancestors whose unpublishing also unpublishes the page (none before
+     * Grav 2.2.29, which introduced `cascade_unpublish`).
+     *
+     * @return PageInterface[]
+     */
+    private static function cascadingAncestors(PageInterface $page): array
+    {
+        $found = [];
+        for ($p = $page->parent(), $guard = 0; $p !== null && $guard < 50; $p = $p->parent(), $guard++) {
+            if (method_exists($p, 'cascadesUnpublish') && $p->cascadesUnpublish()) {
+                $found[] = $p;
+            }
+        }
+        return $found;
+    }
+
+    /**
+     * The page's own scheduled publishing dates [start, end] (timestamps or
+     * null), or null if the dates do not apply. Same rule as Grav
+     * (Page::setPublishState): `system.pages.publish_dates` setting on and no
+     * explicit `published:` in the header — an explicit value takes
+     * precedence over the dates.
+     *
+     * @return array{0:?int, 1:?int}|null
+     */
+    private static function ownSchedule(PageInterface $page): ?array
     {
         if (!Grav::instance()['config']->get('system.pages.publish_dates', true)) {
             return null;
@@ -259,6 +323,22 @@ class Indexer
 
         return $root !== '' && \is_string($real)
             && ($real === $root || str_starts_with($real, $root . DIRECTORY_SEPARATOR));
+    }
+
+    /**
+     * The page's own "routable" flag, as Grav sets it: the `routable` header,
+     * otherwise false for a modular sub-page. NOT `$page->routable()`, which
+     * also requires the page to be published right now: an article scheduled
+     * for later would never be indexed in advance.
+     */
+    private static function reachable(PageInterface $page): bool
+    {
+        $header = $page->header();
+        $flag = \is_object($header) ? ($header->routable ?? null) : ($header['routable'] ?? null);
+        if ($flag !== null && $flag !== '') {
+            return (bool) $flag;
+        }
+        return !$page->modularTwig();
     }
 
     public static function isProtected(PageInterface $page): bool

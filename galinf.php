@@ -920,6 +920,13 @@ class GalinfPlugin extends Plugin
             // index.
             $this->pendingDelete[$route] = $route;
         }
+
+        // `cascade_unpublish` (Grav 2.2.29): the state and dates of this
+        // page decide those of every page below it, but the admin only emits
+        // an event for the saved page → its subtree is examined again.
+        if (method_exists($object, 'cascadesUnpublish') && $object->cascadesUnpublish()) {
+            $this->pendingSubtreeReindex[$route] = true;
+        }
     }
 
     /**
@@ -1119,8 +1126,10 @@ class GalinfPlugin extends Plugin
 
     /**
      * Reindexes every indexable article under the flagged subtrees (admin
-     * reordering/reorganization). The thumbnails already exist (stable key)
-     * → actual cost: media re-scan + SQLite writes.
+     * reordering/reorganization, cascading parent saved), and removes those
+     * that no longer are (hidden by an unpublished parent). The thumbnails
+     * already exist (stable key) → actual cost: media re-scan + SQLite
+     * writes.
      */
     private function reindexSubtrees(Indexer $indexer): void
     {
@@ -1149,6 +1158,8 @@ class GalinfPlugin extends Plugin
             }
             if ($indexer->isIndexable($page)) {
                 $indexer->reindexPage($page);
+            } else {
+                $indexer->forget($route);
             }
         }
     }

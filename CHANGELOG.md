@@ -1,3 +1,12 @@
+# v2.0.2
+## 11/15/2026
+
+1. [](#improved)
+    * **Follows Grav 2.2.29's "Unpublish child pages too"** (`cascade_unpublish`): while a parent page with that option is unpublished, by hand or by its publishing dates, the images of the pages below it are no longer shown in the gallery, and come back with it. Saving such a parent in the admin updates the pages below it; they used to stay in the gallery until the next reindex.
+    * **Cap captcha with Form 9.2.0 or later**: the widget's new solver file (`hashwx.wasm`) is loaded from the Form plugin on your own server, like the rest of the widget. It was downloaded from the jsDelivr CDN.
+2. [](#bugfix)
+    * An article scheduled for later (`publish_date`) is indexed in advance again, and appears on its date without reindexing. Since 1.17.1 it was left out of the index until a reindex ran after its publishing date.
+
 # v2.0.1
 ## 10/28/2026
 

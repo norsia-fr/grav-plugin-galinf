@@ -559,6 +559,7 @@
           // than jsDelivr.
           if (!window.CAP_CUSTOM_WASM_URL) window.CAP_CUSTOM_WASM_URL = c.wasm;
           if (!window.CAP_PAKO_URL) window.CAP_PAKO_URL = c.pako;
+          if (c.hashwx && !window.CAP_CUSTOM_HASHWX_URL) window.CAP_CUSTOM_HASHWX_URL = c.hashwx;
           capToken = '';
           capSolving = loadScript(c.script).then(function () {
             if (!capSolver) {
