@@ -80,7 +80,7 @@ class Comments
         try {
             return (array) $dir->getIndex()->getIndexMap(null);
         } catch (\Throwable $e) {
-            Grav::instance()['log']->warning('galinf: lecture de l\'index des commentaires impossible — ' . $e->getMessage());
+            Grav::instance()['log']->warning('galinf: could not read the comments index — ' . $e->getMessage());
             return [];
         }
     }
@@ -213,7 +213,8 @@ class Comments
 
     /**
      * Applies a page move/rename: rewrites the route of the comments of the
-     * old route AND of its descendants (children move with their parent).
+     * old route AND of its descendants (children move with their parent;
+     * the home page, whose route is `/`, has none).
      * Only the objects concerned are loaded.
      *
      * @return int Number of comments updated.
@@ -225,18 +226,29 @@ class Comments
             return 0;
         }
 
+        // The home page's route is `/`: taken as a prefix it would match EVERY
+        // comment of the site. The home page has no descendants in terms of
+        // routes, so only its own comments follow it (same rule as
+        // Indexer::forgetSubtree). Likewise when the page BECOMES the home.
+        $old    = rtrim($oldRoute, '/');
+        $new    = rtrim($newRoute, '/');
+        $prefix = $old !== '' ? $old . '/' : null;
+
         $count = 0;
-        $prefix = rtrim($oldRoute, '/') . '/';
         foreach (self::entries() as $key => $entry) {
             $route = (string) ($entry['route'] ?? '');
-            if ($route !== $oldRoute && !str_starts_with($route, $prefix)) {
+            if ($route === $oldRoute) {
+                $target = $newRoute;
+            } elseif ($prefix !== null && str_starts_with($route, $prefix)) {
+                $target = $new . substr($route, \strlen($old));
+            } else {
                 continue;
             }
             $object = $dir->getObject((string) $key);
             if (null === $object) {
                 continue;
             }
-            $object->setProperty('route', $newRoute . substr($route, \strlen($oldRoute)));
+            $object->setProperty('route', $target);
             $object->save();
             $count++;
         }
@@ -244,33 +256,161 @@ class Comments
         return $count;
     }
 
-    /**
-     * Purges the comments of a deleted page (and of its descendants).
-     *
-     * @return int Number of comments deleted.
-     */
-    public static function deleteForRoute(string $route): int
-    {
-        $dir = self::directory();
-        if (!$dir || $route === '') {
-            return 0;
-        }
+    /** Comment whose page no longer exists. */
+    public const STATE_PAGE_GONE = 'page';
+    /** Comment whose page exists but no longer holds the image file. */
+    public const STATE_IMAGE_GONE = 'image';
 
-        $count = 0;
-        $prefix = rtrim($route, '/') . '/';
+    /**
+     * Is the comment still attached to something? '' when its page and its
+     * image exist, otherwise STATE_PAGE_GONE or STATE_IMAGE_GONE.
+     *
+     * Nothing is purged when a page is deleted (a deletion can be undone, the
+     * home page's route is `/`, a single translation may be removed…): such
+     * comments simply stay out of sight — no public endpoint serves a page
+     * that is not there — until the admin fixes or deletes them, one by one in
+     * the list, or deletes them all at once from the Maintenance tab.
+     *
+     * When in doubt (pages could not be listed), the answer is '': a comment
+     * is never declared orphan by mistake.
+     */
+    public static function state(string $route, string $file): string
+    {
+        $folders = self::pageFolders();
+        if ($folders === [] || $route === '') {
+            return '';
+        }
+        if (!isset($folders[$route])) {
+            return self::STATE_PAGE_GONE;
+        }
+        if ($file !== '' && $folders[$route] !== '' && !is_file($folders[$route] . '/' . basename($file))) {
+            return self::STATE_IMAGE_GONE;
+        }
+        return '';
+    }
+
+    /**
+     * Orphan comments — page gone, or page still there but image gone —
+     * as [key => STATE_PAGE_GONE | STATE_IMAGE_GONE]. Read from the Flex
+     * index alone (route and file are copied into it).
+     *
+     * A page or an image that was only RENAMED outside the admin looks the
+     * same from here: that is why nothing deletes these comments on its own,
+     * and why the admin can fix their route or file in the list instead.
+     *
+     * @return array<string,string>
+     */
+    public static function orphans(): array
+    {
+        $found = [];
         foreach (self::entries() as $key => $entry) {
-            $r = (string) ($entry['route'] ?? '');
-            if ($r !== $route && !str_starts_with($r, $prefix)) {
-                continue;
+            $state = self::state((string) ($entry['route'] ?? ''), (string) ($entry['file'] ?? ''));
+            if ($state !== '') {
+                $found[(string) $key] = $state;
             }
-            $object = $dir->getObject((string) $key);
+        }
+        return $found;
+    }
+
+    /**
+     * @return array{pages:int, images:int} orphan comments per cause
+     */
+    public static function orphanCounts(): array
+    {
+        $counts = array_count_values(self::orphans());
+
+        return [
+            'pages'  => (int) ($counts[self::STATE_PAGE_GONE] ?? 0),
+            'images' => (int) ($counts[self::STATE_IMAGE_GONE] ?? 0),
+        ];
+    }
+
+    /**
+     * Deletes every orphan comment (Maintenance tab,
+     * `bin/plugin galinf purge-orphan-comments`).
+     *
+     * @return array{pages:int, images:int} comments deleted per cause
+     */
+    public static function deleteOrphans(): array
+    {
+        $deleted = ['pages' => 0, 'images' => 0];
+        $dir = self::directory();
+        if (!$dir) {
+            return $deleted;
+        }
+        foreach (self::orphans() as $key => $state) {
+            $object = $dir->getObject($key);
             if (null !== $object) {
                 $object->delete();
-                $count++;
+                $deleted[$state === self::STATE_PAGE_GONE ? 'pages' : 'images']++;
             }
         }
+        if ($deleted['pages'] + $deleted['images'] > 0) {
+            self::refresh();
+        }
+        return $deleted;
+    }
 
-        return $count;
+    /** @var array<string,string>|null route => folder of every existing page (per request). */
+    private static ?array $pageFolders = null;
+
+    /**
+     * Every page of the site, published or not, in every language: route =>
+     * folder. Empty when the pages could not be listed.
+     *
+     * @return array<string,string>
+     */
+    private static function pageFolders(): array
+    {
+        if (self::$pageFolders !== null) {
+            return self::$pageFolders;
+        }
+
+        $folders = [];
+        try {
+            $grav  = Grav::instance();
+            $pages = $grav['pages'];
+            if (method_exists($pages, 'enablePages')) {
+                $pages->enablePages();
+            }
+            $pages->init();
+            self::collectFolders($pages, $folders);
+
+            // Multilingual site: routes can differ from one language to the
+            // next (translated slugs) → every language is listed.
+            $language = $grav['language'];
+            if ($language->enabled()) {
+                $active = $language->getActive();
+                try {
+                    foreach ((array) $language->getLanguages() as $lang) {
+                        if ($lang === $active) {
+                            continue;
+                        }
+                        $language->setActive($lang);
+                        $pages->reset();
+                        self::collectFolders($pages, $folders);
+                    }
+                } finally {
+                    $language->setActive($active);
+                    $pages->reset();
+                }
+            }
+        } catch (\Throwable $e) {
+            Grav::instance()['log']->warning('galinf: could not list the pages — ' . $e->getMessage());
+            $folders = [];
+        }
+
+        return self::$pageFolders = $folders;
+    }
+
+    private static function collectFolders($pages, array &$folders): void
+    {
+        foreach ($pages->instances() as $page) {
+            $route = $page->route();
+            if (\is_string($route) && $route !== '') {
+                $folders[$route] = (string) $page->path();
+            }
+        }
     }
 
     /**

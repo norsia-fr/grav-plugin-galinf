@@ -21,7 +21,8 @@ use RocketTheme\Toolbox\Event\Event;
  *
  * Hooks into the save lifecycle of Flex pages (Admin2):
  *   - onAdminAfterSave   → (re)indexes the article (deferred to onShutdown)
- *   - onAdminAfterDelete → purges the article from the index
+ *   - onAdminAfterDelete → purges the article from the index (its comments
+ *     are kept: see Comments::state)
  *
  * NB: onPageProcessed (read/render) is NOT used: it fires on every visitor
  * page view, not on save. Edits made outside the admin (direct file, CLI)
@@ -105,9 +106,6 @@ class GalinfPlugin extends Plugin
 
     /** @var array<string,string> Comments to re-route (old route => new one). */
     private array $pendingCommentMove = [];
-
-    /** @var array<string,string> Routes whose comments must be purged (deleted pages). */
-    private array $pendingCommentDelete = [];
 
     /** @var array<string,array{0:string,1:string}> Images whose SQLite counter must be resynced. */
     private array $pendingCommentRecount = [];
@@ -480,7 +478,7 @@ class GalinfPlugin extends Plugin
 
         // Honeypot: hidden field filled in = bot → answer "success" without
         // saving anything (the bot thinks it succeeded and moves on).
-        if (trim((string) ($body['website'] ?? '')) !== '') {
+        if (trim(self::str($body['website'] ?? '')) !== '') {
             $this->jsonOut(['ok' => true, 'pending' => false]);
         }
 
@@ -494,7 +492,7 @@ class GalinfPlugin extends Plugin
 
         // Text and nickname BEFORE the captcha: fixing an empty field must
         // not cost the visitor their token.
-        $text = trim((string) ($body['text'] ?? ''));
+        $text = trim(self::str($body['text'] ?? ''));
         if ($text === '') {
             $this->refuse('empty', 400);
         }
@@ -508,7 +506,7 @@ class GalinfPlugin extends Plugin
             $user = $this->grav['user'];
             $name = (string) ($user->fullname ?: $user->username);
         } else {
-            $name = trim((string) ($body['name'] ?? ''));
+            $name = trim(self::str($body['name'] ?? ''));
             if ($name === '' && $this->config->get('plugins.galinf.comments_require_name', false)) {
                 $this->refuse('name_required', 400);
             }
@@ -517,7 +515,7 @@ class GalinfPlugin extends Plugin
         // Daily cap for the whole site (option), before any costly step.
         // Moderators are neither limited nor counted.
         $dailyMax = $moderate ? 0 : Comments::dailyMax();
-        if ($dailyMax > 0 && $this->getDb()->commentsToday() >= $dailyMax) {
+        if ($dailyMax > 0 && $this->guarded(fn() => $this->getDb()->commentsToday(), $authed) >= $dailyMax) {
             $this->refuse('daily_limit', 429);
         }
 
@@ -540,7 +538,10 @@ class GalinfPlugin extends Plugin
         $provider = FormCaptcha::provider();
         if (!$authed && $provider !== 'none') {
             if ($provider === 'galinf') {
-                $refusal = $this->captchaVerify((string) ($body['captcha'] ?? ''), (string) ($body['token'] ?? ''));
+                $refusal = $this->guarded(
+                    fn() => $this->captchaVerify(self::str($body['captcha'] ?? ''), self::str($body['token'] ?? '')),
+                    $authed
+                );
                 $retry = ['captcha' => $this->captchaChallenge()];
                 if ($refusal !== null) {
                     $this->refuse($refusal, 400, $retry);
@@ -556,19 +557,19 @@ class GalinfPlugin extends Plugin
                 // a flood of fake tokens cannot keep the server busy with
                 // remote checks.
                 if ($provider !== 'cap') {
-                    if (!$this->getDb()->rateLimitAllow($ipHash)) {
+                    if (!$this->guarded(fn() => $this->getDb()->rateLimitAllow($ipHash), $authed)) {
                         $this->refuse('rate_limited', 429);
                     }
                     $rateCounted = true;
                 }
-                if (!FormCaptcha::verify($provider, (string) ($body['captcha'] ?? ''))) {
+                if (!FormCaptcha::verify($provider, self::str($body['captcha'] ?? ''))) {
                     $this->refuse('captcha_failed', 400);
                 }
             }
         }
 
-        $route = '/' . ltrim((string) ($body['route'] ?? ''), '/');
-        $file  = basename((string) ($body['file'] ?? ''));   // never a path
+        $route = '/' . ltrim(self::str($body['route'] ?? ''), '/');
+        $file  = basename(self::str($body['file'] ?? ''));   // never a path
 
         $page = $route !== '/' ? $this->grav['pages']->find($route) : null;
         if (!$page instanceof PageInterface || !$this->getIndexer()->isServable($page)) {
@@ -584,7 +585,7 @@ class GalinfPlugin extends Plugin
             $this->refuse('unknown_image', 404, $retry);
         }
 
-        if (!$rateCounted && !$this->getDb()->rateLimitAllow($ipHash)) {
+        if (!$rateCounted && !$this->guarded(fn() => $this->getDb()->rateLimitAllow($ipHash), $authed)) {
             $this->refuse('rate_limited', 429, $retry);
         }
 
@@ -610,6 +611,17 @@ class GalinfPlugin extends Plugin
 
     /* ---- comment helpers ---- */
 
+    /**
+     * A request value as a string: text and numbers as they are, anything
+     * else (array, object, null — `?sort[]=a`, `{"text": ["a"]}`) as ''. A
+     * plain (string) cast on an array raises a warning, which Grav turns
+     * into a 500.
+     */
+    private static function str($value): string
+    {
+        return \is_string($value) || \is_int($value) || \is_float($value) ? (string) $value : '';
+    }
+
     private function isAuthenticated(): bool
     {
         $user = $this->grav['user'] ?? null;
@@ -619,15 +631,35 @@ class GalinfPlugin extends Plugin
     /**
      * A user logged in ON THE SITE (Admin Next's login does not open a site
      * session) who may moderate: Grav 2 administrator (`api.super`), allowed
-     * to edit gallery comments, or Grav 1.7 admin permissions (migrated
-     * accounts).
+     * to edit gallery comments, or Grav 1.7 super administrator (migrated
+     * accounts). `admin.login`, the old admin's mere right of entry, is NOT
+     * enough: every migrated account holds it, limited editors included.
      */
     private function isModerator(): bool
     {
         $user = $this->grav['user'] ?? null;
         return $user && !empty($user->authenticated) && !empty($user->authorized)
             && ($user->authorize('api.super') || $user->authorize('admin.galinf-comments.update')
-                || $user->authorize('admin.super') || $user->authorize('admin.login'));
+                || $user->authorize('admin.super'));
+    }
+
+    /**
+     * Runs a check that reads or writes the SQLite index. A failure there
+     * (database locked for more than its 5 s timeout, disk full…) must not
+     * end in an HTML error page: the visitor gets a regular refusal, and a
+     * new question since theirs may have been consumed.
+     *
+     * @return mixed what $check returns
+     */
+    private function guarded(callable $check, bool $authed)
+    {
+        try {
+            return $check();
+        } catch (\Throwable $e) {
+            $this->grav['log']->error('galinf: comment check failed — ' . $e->getMessage());
+            $retry = !$authed && FormCaptcha::provider() === 'galinf' ? ['captcha' => $this->captchaChallenge()] : [];
+            $this->refuse('server', 503, $retry);
+        }
     }
 
     /**
@@ -848,6 +880,8 @@ class GalinfPlugin extends Plugin
         $routes->post('/galinf/reindex-batch', [$controller, 'reindexBatch']);
         $routes->post('/galinf/purge-thumbs', [$controller, 'purgeThumbs']);
         $routes->post('/galinf/remove-data', [$controller, 'removeData']);
+        // Orphan comments (page or image gone).
+        $routes->post('/galinf/purge-orphan-comments', [$controller, 'purgeOrphanComments']);
         $routes->get('/galinf/stats', [$controller, 'stats']);
         // Images too large for Grav to resize (> max_pixels).
         $routes->get('/galinf/missing-thumbs', [$controller, 'missingThumbs']);
@@ -864,12 +898,12 @@ class GalinfPlugin extends Plugin
         $uri    = $this->grav['uri'];
         $config = $this->config;
 
-        $sort   = (string) ($uri->query('sort') ?: $config->get('plugins.galinf.default_sort', 'desc'));
+        $sort   = self::str($uri->query('sort')) ?: (string) $config->get('plugins.galinf.default_sort', 'desc');
         // Sort criterion: date | folder. Admin setting, overridable per
         // request (the JS sends back the one set by the renderer).
-        $field  = (string) ($uri->query('field') ?: $config->get('plugins.galinf.sort_field', 'date'));
-        $cursor = $uri->query('cursor') ?: null;
-        $limit  = (int) ($uri->query('limit') ?: $config->get('plugins.galinf.batch_size', 80));
+        $field  = self::str($uri->query('field')) ?: (string) $config->get('plugins.galinf.sort_field', 'date');
+        $cursor = self::str($uri->query('cursor')) ?: null;
+        $limit  = (int) (self::str($uri->query('limit')) ?: $config->get('plugins.galinf.batch_size', 80));
         $max    = (int) $config->get('plugins.galinf.max_batch_size', 200);
 
         // Seed (random sort): positive integer provided by the client,
@@ -884,7 +918,7 @@ class GalinfPlugin extends Plugin
         $route = (is_string($routeParam) && $routeParam !== '') ? $routeParam : null;
 
         $feed = new Feed($this->getDb(), (string) $this->grav['base_url'], $max);
-        $payload = $feed->build($sort, $cursor !== null ? (string) $cursor : null, $limit, $seed, $route, $field);
+        $payload = $feed->build($sort, $cursor, $limit, $seed, $route, $field);
 
         header('Content-Type: application/json; charset=utf-8');
         header('Cache-Control: public, max-age=0');
@@ -1045,16 +1079,21 @@ class GalinfPlugin extends Plugin
         if ($object instanceof PageInterface && ($route = $object->route()) !== null) {
             // The whole folder is gone, subpages included, but the admin only
             // emits an event for the deleted page: its descendant articles
-            // leave the index with it. Folder still there = deletion of a
-            // single translation: the page alone, as before.
-            if (is_dir((string) $object->path())) {
-                $this->pendingDelete[$route] = $route;
-            } else {
+            // leave the index with it.
+            if (!is_dir((string) $object->path())) {
                 $this->pendingSubtreeDelete[$route] = true;
+            } elseif ($this->getIndexer()->isIndexable($object)) {
+                // Folder still there = a single translation was deleted: the
+                // page lives on in its other languages and stays indexed.
+                $this->pendingReindex[$route] = $object;
+            } else {
+                $this->pendingDelete[$route] = $route;
             }
-            // Page deleted → its comments (and its descendants') have nothing
-            // left to refer to: purge from the Flex directory.
-            $this->pendingCommentDelete[$route] = $route;
+            // The COMMENTS are never purged here: a deletion can be undone,
+            // only one translation may be gone, and the home page's route
+            // (`/`) is a prefix of every other one. Comments of a vanished
+            // page are served nowhere; the admin deletes them when they want
+            // (comments list, or the Maintenance tab).
         }
     }
 
@@ -1066,8 +1105,7 @@ class GalinfPlugin extends Plugin
     {
         if (empty($this->pendingReindex) && empty($this->pendingDelete)
             && empty($this->pendingSubtreeReindex) && empty($this->pendingSubtreeDelete)
-            && empty($this->pendingCommentMove) && empty($this->pendingCommentDelete)
-            && empty($this->pendingCommentRecount)) {
+            && empty($this->pendingCommentMove) && empty($this->pendingCommentRecount)) {
             return;
         }
 
@@ -1085,20 +1123,16 @@ class GalinfPlugin extends Plugin
 
         $indexer = $this->getIndexer();
 
-        // Comments first: re-routing (moves) and purges (deleted pages), then
-        // the Flex index is refreshed so that the reindexes below
-        // (statsByFile) see the up-to-date routes.
+        // Comments first: re-routing (moves), then the Flex index is
+        // refreshed so that the reindexes below (statsByFile) see the
+        // up-to-date routes.
         foreach ($this->pendingCommentMove as $old => $new) {
             Comments::changeRoute($old, $new);
         }
-        foreach ($this->pendingCommentDelete as $route) {
-            Comments::deleteForRoute($route);
-        }
-        if ($this->pendingCommentMove || $this->pendingCommentDelete) {
+        if ($this->pendingCommentMove) {
             Comments::refresh();
         }
         $this->pendingCommentMove = [];
-        $this->pendingCommentDelete = [];
 
         foreach ($this->pendingDelete as $route) {
             $indexer->forget($route);   // index rows + thumbnails

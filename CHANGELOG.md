@@ -1,3 +1,19 @@
+# v2.0.3
+## 11/16/2026
+
+1. [](#new)
+    * **Deleting a page keeps its comments.** They used to be deleted with it, for good — including when the deletion was undone, and when only one translation of the page was deleted. They are now simply no longer shown on the site, and come back with the page if it is restored. The comments list has a **Status** column ("Page gone", "Image gone"): if the page or the image was only renamed, correct the comment's route or file there and it is back on the site. To delete the others all at once, the Maintenance tab has a **Delete orphan comments** action, which gives both counts before asking for confirmation (`bin/plugin galinf purge-orphan-comments` from the command line).
+2. [](#improved)
+    * Removing an image from a page in the admin deletes its thumbnail right away. The thumbnail used to stay reachable by its address until the next purge of orphan thumbnails.
+    * **Moderators**: on a site migrated from Grav 1.7, the old `admin.login` permission alone no longer makes an account a moderator on the site (comments published without pre-moderation and outside the daily cap). Super administrators and accounts allowed to edit gallery comments (`admin.galinf-comments` → update) still are.
+    * When the index database is busy for too long, posting a comment answers with a regular "could not be saved" message and a new anti-bot question, instead of an error page.
+3. [](#bugfix)
+    * **Security**: deleting the page set as the site's home page deleted every comment of the site. Covered by the change above: no comment is deleted with a page any more.
+    * **Security**: an author allowed to write page content, but not scripts, could have a script run in visitors' browsers by typing a gallery container by hand in a page. The gallery and the lightbox now only load and link to addresses of the site itself, and only load the PhotoSwipe and Cap files shipped with the plugins.
+    * **Security**: the article and the image file of a comment, editable in the admin, are checked before being turned into links in the comments list and in the image preview.
+    * A request parameter sent as a list (`?sort[]=…`, or a list in a comment's fields) answered with a server error.
+    * A spacing of 0 between images (Gallery tab) was replaced by the default spacing.
+
 # v2.0.2
 ## 11/15/2026
 

@@ -408,8 +408,22 @@ class Indexer
             return 0;
         }
 
+        // Thumbnails the article had before: those the new rows no longer
+        // reference (image removed from the page, thumbnail width changed)
+        // are deleted right away. A removed image must not stay reachable
+        // through its thumbnail until someone runs the orphan purge.
+        $before = $this->db->thumbPathsForRoute($route);
+
         $rows = $this->buildRows($page);
         $this->db->replaceArticle($route, $rows);
+
+        $kept = [];
+        foreach ($rows as $row) {
+            if ($row['thumb_path'] !== null) {
+                $kept[(string) preg_replace('/\?.*$/', '', $row['thumb_path'])] = true;
+            }
+        }
+        $this->unlinkThumbs(array_filter($before, static fn(string $path): bool => !isset($kept[$path])));
 
         return \count($rows);
     }

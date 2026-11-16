@@ -104,13 +104,42 @@
     };
   }
 
+  /* ---- addresses: this site only ----
+     Everything the component loads or links to comes from attributes of the
+     container and from JSON responses. The plugin writes them, but any
+     `.galinf-gallery` element found in the page is initialized, including
+     one typed by an author in a page's content — where Grav lets a <div>
+     through but no script. So no address is trusted: each must resolve to
+     THIS origin over http(s), and the code modules to the plugin's own
+     files. Returns the absolute address, or '' when it is refused. */
+  function sameOrigin(url) {
+    if (typeof url !== 'string' || url === '') return '';
+    try {
+      var u = new URL(url, window.location.href);
+      if ((u.protocol !== 'http:' && u.protocol !== 'https:') || u.origin !== window.location.origin) return '';
+      return u.href;
+    } catch (e) {
+      return '';
+    }
+  }
+  /* Same, and the path must end with `pattern` (a file the plugin ships). */
+  function ownFile(url, pattern) {
+    var href = sameOrigin(url);
+    if (!href) return '';
+    return pattern.test(new URL(href).pathname) ? href : '';
+  }
+  window.galinfUrl = { sameOrigin: sameOrigin, ownFile: ownFile };
+
+  var PSWP_LIGHTBOX = /\/plugins\/galinf\/assets\/photoswipe\/photoswipe-lightbox\.esm\.min\.js$/;
+  var PSWP_CORE     = /\/plugins\/galinf\/assets\/photoswipe\/photoswipe\.esm\.min\.js$/;
+
   window.galinfI18n = function (root) {
     return root._galinfI18n || (root._galinfI18n = makeI18n(root));
   };
 
   function init(root) {
     var i18n = window.galinfI18n(root), t = i18n.t;
-    var feed      = root.dataset.feed;
+    var feed      = sameOrigin(root.dataset.feed);
     var base      = root.dataset.base || '';
     var article   = root.dataset.route || null;   // article page mode if set
     // Order: asc | desc | random (old recent/oldest aliases tolerated).
@@ -119,7 +148,10 @@
     var field     = root.dataset.field === 'folder' ? 'folder' : 'date';
     var batch     = parseInt(root.dataset.batch, 10) || 80;
     var rowHeight = parseInt(root.dataset.rowHeight, 10) || 220;
-    var gap       = parseInt(root.dataset.gap, 10) || 6;
+    // 0 is a valid spacing (images touching): only a missing value falls
+    // back on the default.
+    var gap       = parseInt(root.dataset.gap, 10);
+    if (isNaN(gap) || gap < 0) gap = 6;
     var MARGIN      = parseInt(root.dataset.margin, 10) || 500;
     var loop        = root.dataset.loop === '1';
     // Metadata buffer: number of items kept ahead beyond the last rendered
@@ -129,6 +161,9 @@
 
     var runway     = root.querySelector('.galinf-runway');
     var status     = root.querySelector('.galinf-status');
+    // Not a container written by the plugin (no runway, or a feed that is
+    // not on this site): left alone.
+    if (!runway || !feed) return;
     var sortSelect = root.querySelector('.galinf-sort');
 
     // Elements written by the server (sort menu): in the chosen language.
@@ -214,7 +249,10 @@
         .then(function (d) {
           if (reqGen !== gen) return;   // order changed in the meantime
           (d.items || []).forEach(function (it) {
-            items.push({ thumb: it.thumb_url, full: it.full_url, route: it.article_route,
+            // Images are stored on this site: any other address is dropped.
+            var full = sameOrigin(it.full_url);
+            if (!full || !(it.width > 0) || !(it.height > 0)) return;
+            items.push({ thumb: sameOrigin(it.thumb_url) || full, full: full, route: String(it.article_route || ''),
                          title: it.article_title || '', rw: it.width, rh: it.height,
                          animated: !!it.animated, comments: it.comments | 0,
                          x: 0, y: 0, w: 0, h: 0 });
@@ -506,7 +544,9 @@
     }
 
     function setupLightbox() {
-      var lbUrl = root.dataset.pswpLightbox, coreUrl = root.dataset.pswpCore;
+      // Code modules: only the PhotoSwipe files shipped with the plugin.
+      var lbUrl = ownFile(root.dataset.pswpLightbox, PSWP_LIGHTBOX);
+      var coreUrl = ownFile(root.dataset.pswpCore, PSWP_CORE);
       if (!lbUrl || !coreUrl) return;
       import(lbUrl).then(function (mod) {
         var PhotoSwipeLightbox = mod.default;

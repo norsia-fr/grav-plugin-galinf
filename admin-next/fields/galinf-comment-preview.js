@@ -74,10 +74,15 @@ class GalinfCommentPreviewField extends HTMLElement {
             body = `<p class="gcp-note">${T('PREVIEW_UNAVAILABLE')}</p>`;
         } else if (!d) {
             body = `<p class="gcp-note">${T('PREVIEW_LOADING')}</p>`;
-        } else if (!d.image) {
-            body = `<p class="gcp-note">${T('PREVIEW_NOT_FOUND')}</p>`;
+        } else if (!this._local(d.image) || d.state) {
+            // No usable address, or an orphan comment: its page ('page') or
+            // its image ('image') no longer exists.
+            const key = d.state === 'page' ? 'PREVIEW_PAGE_GONE'
+                : d.state === 'image' ? 'PREVIEW_IMAGE_GONE' : 'PREVIEW_NOT_FOUND';
+            const where = d.route ? ` <code>${this._esc(d.route)}${d.file ? '/' + this._esc(d.file) : ''}</code>` : '';
+            body = `<p class="gcp-note">${T(key)}${d.state ? where : ''}</p>`;
         } else {
-            const src = d.thumb || d.image;
+            const src = this._local(d.thumb) ? d.thumb : d.image;
             body = `
                 <a href="${this._esc(d.image)}" target="_blank" rel="noopener" title="${this._esc(T('PREVIEW_OPEN'))}">
                     <img src="${this._esc(src)}" alt="${this._esc(d.file || '')}" loading="lazy">
@@ -93,6 +98,11 @@ class GalinfCommentPreviewField extends HTMLElement {
                 .gcp-note { margin: 0; font-size: 13px; color: var(--muted-foreground, #6b7280); }
             </style>
             ${body}`;
+    }
+
+    // An address of this site: one leading slash, nothing else is linked.
+    _local(url) {
+        return typeof url === 'string' && /^\/(?!\/)/.test(url);
     }
 
     _esc(s) {

@@ -17,7 +17,7 @@ use Grav\Framework\Flex\Interfaces\FlexStorageInterface;
 class CommentIndex extends GenericIndex
 {
     // Changing the version forces the index file to be rebuilt.
-    const VERSION = parent::VERSION . '.galinf.3';
+    const VERSION = parent::VERSION . '.galinf.4';
 
     /**
      * Enables the enriched index FILE (index.yaml next to the storage), like
@@ -74,5 +74,10 @@ class CommentIndex extends GenericIndex
         // that these sorts NEVER load the objects.
         $meta['url']       = $meta['route'];
         $meta['image_url'] = $meta['route'] . '/' . $meta['file'];
+        // "Status" column (`state` virtual property: page or image gone): it
+        // depends on the pages, not on the comment, so it cannot be indexed.
+        // A constant key keeps a click on its header from loading every
+        // object (the order is then simply left as it is).
+        $meta['state'] = '';
     }
 }

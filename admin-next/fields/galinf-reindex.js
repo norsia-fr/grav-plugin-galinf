@@ -35,6 +35,7 @@ const ICONS = {
     force: '<path d="m17 2 4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>',
     scratch: '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5"/><path d="M3 12c0 1.7 4 3 9 3s9-1.3 9-3"/>',
     purge: '<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="m19 6-1 14H6L5 6"/><path d="M10 11v5M14 11v5"/>',
+    orphans: '<path d="M21 15a2 2 0 0 1-2 2H8l-5 4V6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="m10 9 4 4M14 9l-4 4"/>',
 };
 const icon = (id) => `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
     stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[id] || ''}</svg>`;
@@ -42,7 +43,7 @@ const icon = (id) => `<svg viewBox="0 0 24 24" width="18" height="18" fill="none
 // Grouping for display: everyday upkeep on one side, rebuilds (long or
 // destructive) on the other.
 const GROUPS = [
-    { title: 'GROUP_ROUTINE', ids: ['all', 'index', 'missing', 'purge'] },
+    { title: 'GROUP_ROUTINE', ids: ['all', 'index', 'missing', 'purge', 'orphans'] },
     { title: 'GROUP_REBUILD', ids: ['force', 'scratch'] },
 ];
 
@@ -64,6 +65,9 @@ const ACTIONS = [
     { id: 'force', mode: 'force', kind: 'heavy', est: 'force', confirm: true },
     { id: 'scratch', mode: 'scratch', kind: 'delete', est: 'missing', confirm: true },
     { id: 'purge', purge: true, kind: 'delete', confirm: true },
+    // Orphan comments (page gone, or image gone from its page — nothing
+    // deletes them on its own): one request, POST /galinf/purge-orphan-comments.
+    { id: 'orphans', orphans: true, kind: 'delete', confirm: true },
 ];
 const actText = (a, suffix = '') => T('ACT_' + a.id.toUpperCase() + suffix);
 
@@ -94,7 +98,8 @@ class GalinfReindexField extends HTMLElement {
         // display is reset WITHOUT querying the server (the stats request
         // would immediately recreate an empty database).
         this._onRemoved = () => {
-            this._stats = { total: 0, last_indexed_at: null, missing_thumbs: null, last_runs: {} };
+            this._stats = { total: 0, last_indexed_at: null, missing_thumbs: null, last_runs: {},
+                            orphan_comments: this._stats?.orphan_comments };
             this._result = null;
             this._render();
         };
@@ -220,7 +225,9 @@ class GalinfReindexField extends HTMLElement {
         if (action.confirm) {
             const ok = await (window.__GRAV_DIALOGS?.confirm({
                 title: T('CONFIRM_TITLE', { action: actText(action) }),
-                message: actText(action, '_CONFIRM'),
+                message: action.orphans
+                    ? T('ACT_ORPHANS_CONFIRM', this._orphans())
+                    : actText(action, '_CONFIRM'),
                 confirmLabel: actText(action),
                 variant: 'destructive',
             }) ?? Promise.resolve(false));
@@ -230,7 +237,8 @@ class GalinfReindexField extends HTMLElement {
         this._busy = true;
         this._result = null;
         this._job = { title: actText(action), done: 0, total: 0, images: 0, thumbs: 0, route: '',
-                      stop: false, phase: action.mode ? 'index' : 'purge', started: Date.now() };
+                      stop: false, phase: action.mode ? 'index' : (action.orphans ? 'orphans' : 'purge'),
+                      started: Date.now() };
         this._render();
 
         const parts = [];
@@ -276,6 +284,10 @@ class GalinfReindexField extends HTMLElement {
                 } while (!p.done && !this._job.stop);
                 parts.push(T('PART_PURGED', { n: p.deleted, size: this._humanSize(p.freed) }));
             }
+            if (action.orphans) {
+                const o = await this._api('POST', '/galinf/purge-orphan-comments', {});
+                parts.push(T('PART_ORPHANS', { pages: o.pages, images: o.images }));
+            }
             const stopped = this._job.stop;
             parts.push(T('PART_DURATION', { duration: this._duration((Date.now() - this._job.started) / 1000) }));
             this._result = {
@@ -294,6 +306,14 @@ class GalinfReindexField extends HTMLElement {
         }
     }
 
+    // Orphan comments reported by the stats: of vanished pages, of vanished
+    // images, and their total.
+    _orphans() {
+        const o = this._stats?.orphan_comments || {};
+        const pages = Number(o.pages) || 0, images = Number(o.images) || 0;
+        return { pages, images, total: pages + images };
+    }
+
     _duration(seconds) {
         if (seconds < 1) return T('DURATION_UNDER_1S');
         if (seconds < 90) return num(Math.round(seconds)) + ' s';
@@ -307,6 +327,15 @@ class GalinfReindexField extends HTMLElement {
     _lastRunLine(action) {
         if (!this._stats) return '';
         const run = (this._stats.last_runs || {})[action.id];
+        if (action.orphans) {
+            // What there is to delete now, then the last run if any.
+            const o = this._orphans();
+            const now = o.total ? T('ORPHANS_COUNT', o) : T('ORPHANS_NONE');
+            return run
+                ? now + ' ' + T('LAST_RUN', { when: dateTime(run.at), duration: this._duration(run.seconds),
+                                              what: T('LAST_RUN_ORPHANS', { n: run.deleted }) })
+                : now;
+        }
         if (run) {
             const what = action.id === 'purge'
                 ? T('LAST_RUN_PURGE', { n: run.deleted, size: this._humanSize(run.freed) })
@@ -336,6 +365,13 @@ class GalinfReindexField extends HTMLElement {
         const j = this._job;
         if (!j) return '';
         const pct = j.total ? Math.round(j.done / j.total * 100) : 0;
+        if (j.phase === 'orphans') {
+            // A single short request: no progress to show, nothing to stop.
+            return `
+            <div class="prog job" role="status">
+                <strong>${this._esc(j.title)} — ${T('JOB_STARTING')}</strong>
+            </div>`;
+        }
         const purge = j.phase === 'purge';
         const head = purge
             ? (j.total ? T('JOB_FOLDER', { n: Math.min(j.done + 1, j.total), total: j.total }) : T('JOB_PURGING'))
@@ -365,7 +401,7 @@ class GalinfReindexField extends HTMLElement {
                     ? ` <b class="badge ${a.kind}">${T(KINDS[a.kind])}</b>` : ''}</strong><span>${actText(a, '_DESC')}</span>
                     <em>${this._lastRunLine(a)}</em></div>
                 <button class="act ${a.primary ? 'primary' : ''} ${a.kind || ''}"
-                    data-id="${a.id}" ${off}>${actText(a)}</button>
+                    data-id="${a.id}" ${off || (a.orphans && !this._orphans().total ? 'disabled' : '')}>${actText(a)}</button>
             </div>`;
         return GROUPS.map((g) => `
             <div class="group">

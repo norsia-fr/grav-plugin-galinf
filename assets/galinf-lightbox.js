@@ -22,10 +22,17 @@
   }
 
   window.galinfLightboxUI = function (lightbox, root) {
+    // Addresses: this site only (see galinfUrl in galinf-gallery.js).
+    // (an older galinf-gallery.js still in the browser cache has none: every
+    // address is then refused until it is refreshed, rather than trusted.)
+    var urls        = window.galinfUrl
+      || { sameOrigin: function () { return ''; }, ownFile: function () { return ''; } };
     var base        = root.dataset.base || '';
     var article     = !!root.dataset.route;          // article page mode
-    var metaUrl     = root.dataset.meta || '';
-    var commentUrl  = root.dataset.comment || '';    // comments POST endpoint
+    var metaUrl     = urls.sameOrigin(root.dataset.meta);
+    var commentUrl  = urls.sameOrigin(root.dataset.comment);   // comments POST endpoint
+    // Files of the Form plugin's Cap widget, the only ones Cap may load.
+    var CAP_FILE    = /\/plugins\/form\/assets\/captcha\/cap\/[A-Za-z0-9_.-]+$/;
     var loop        = root.dataset.loop === '1';
     // Visitor texts: shared translator, created by galinf-gallery.js.
     var i18n        = window.galinfI18n(root);
@@ -445,10 +452,15 @@
             if (article) {
               art.appendChild(document.createTextNode(t('ARTICLE_CURRENT', { title: data.alt })));
             } else {
-              var a = document.createElement('a');
-              a.href = base + (data._route || '');
-              a.textContent = data.alt;
-              art.appendChild(a);
+              var artUrl = urls.sameOrigin(base + (data._route || ''));
+              if (artUrl) {
+                var a = document.createElement('a');
+                a.href = artUrl;
+                a.textContent = data.alt;
+                art.appendChild(a);
+              } else {
+                art.appendChild(document.createTextNode(data.alt));
+              }
             }
             sbHead.appendChild(art);
           }
@@ -555,15 +567,28 @@
         function capSolve(c) {
           if (capToken && Date.now() - capAt < CAP_MAX_AGE) return Promise.resolve(capToken);
           if (capSolving) return capSolving;
+          // Every address comes from a JSON response: only the Form plugin's
+          // own Cap files, on this site, are accepted.
+          var capScript = urls.ownFile(c.script, CAP_FILE);
+          var capWasm = urls.ownFile(c.wasm, CAP_FILE);
+          var capPako = urls.ownFile(c.pako, CAP_FILE);
+          var capEndpoint = urls.sameOrigin(c.endpoint);
+          if (!capScript || !capWasm || !capPako || !capEndpoint) {
+            return Promise.reject(new Error('Cap files refused'));
+          }
           // Read by cap.min.js as it runs: the Form plugin's copies rather
-          // than jsDelivr.
-          if (!window.CAP_CUSTOM_WASM_URL) window.CAP_CUSTOM_WASM_URL = c.wasm;
-          if (!window.CAP_PAKO_URL) window.CAP_PAKO_URL = c.pako;
-          if (c.hashwx && !window.CAP_CUSTOM_HASHWX_URL) window.CAP_CUSTOM_HASHWX_URL = c.hashwx;
+          // than jsDelivr. Assigned unconditionally: an element of the page
+          // carrying one of these names as its id would otherwise already
+          // "exist" in window and be used instead.
+          window.CAP_CUSTOM_WASM_URL = capWasm;
+          window.CAP_PAKO_URL = capPako;
+          if (c.hashwx && urls.ownFile(c.hashwx, CAP_FILE)) {
+            window.CAP_CUSTOM_HASHWX_URL = urls.ownFile(c.hashwx, CAP_FILE);
+          }
           capToken = '';
-          capSolving = loadScript(c.script).then(function () {
+          capSolving = loadScript(capScript).then(function () {
             if (!capSolver) {
-              var opts = { apiEndpoint: c.endpoint };
+              var opts = { apiEndpoint: capEndpoint };
               if (capSingleWorker) opts['data-cap-worker-count'] = 1;
               capSolver = new window.Cap(opts);
             } else {

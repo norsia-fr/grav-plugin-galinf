@@ -193,6 +193,7 @@ bin/plugin galinf reindex --no-thumbs         # index only: no thumbnail created
 bin/plugin galinf reindex --force-thumbs      # recreates every thumbnail, even existing ones
 bin/plugin galinf reindex --clear             # starts again from an empty index
 bin/plugin galinf purge-thumbs                # deletes orphan thumbnails
+bin/plugin galinf purge-orphan-comments [--yes]   # deletes the comments whose page or image no longer exists
 bin/plugin galinf shrink-oversized [--yes]    # shrinks oversized images in place (originals replaced)
 bin/plugin galinf uninstall-data [--comments] [--yes]   # before uninstalling: deletes index and thumbnails
 ```
@@ -393,14 +394,19 @@ live through Flex events and recomputed on every reindex.
 - **Moderation in the admin**: a **"Gallery comments"** entry appears in the
   Admin Next sidebar — paginated list sorted by date, **Approved** column
   (state in the list, approval in the edit form), **Page** column linking to
-  the article, editing (with a preview of the commented image), deletion,
-  search. Dedicated permissions (`admin.galinf-comments`, CRUDPL) to delegate
+  the article, **Status** column ("Page gone" / "Image gone" for a comment
+  whose page or image no longer exists), editing (with a preview of the
+  commented image), deletion, search. Dedicated permissions (`admin.galinf-comments`, CRUDPL) to delegate
   moderation without granting full powers.
 - **Who can comment** (option): everyone (free nickname), logged-in members,
   or administrators. "Logged in" means logged in **on the site** (login
   plugin): being logged in to the admin does not count, Grav keeps the two
   apart. Administrators, and accounts allowed to edit gallery comments, are
-  moderators: their comments skip pre-moderation and the daily cap.
+  moderators: their comments skip pre-moderation and the daily cap. On a
+  site migrated from Grav 1.7, the old `admin.login` permission alone no
+  longer makes an account a moderator (it did until 2.0.2): grant
+  `admin.galinf-comments` → update, or super administrator, to the accounts
+  that should be.
   Required nickname: your choice. A comment left without a nickname is
   signed "Anon".
 - **Length** (option): 300 characters by default, from 50 to 1000. The
@@ -451,7 +457,20 @@ live through Flex events and recomputed on every reindex.
 - **Pre-moderation** (option): comments wait for approval in the admin list.
   Disabled: published immediately, deleted afterwards if needed.
 - Comments **follow their pages**: moving/renaming an article in the admin →
-  their routes are rewritten; deleting an article → its comments are purged.
+  their routes are rewritten.
+- **Deleting a page or an image keeps its comments.** They are no longer
+  shown anywhere on the site, and come back with the page if it is restored.
+  In the admin list their **Status** column reads "Page gone" or "Image
+  gone", next to the route and the file they were attached to.
+  - A page renamed or moved **in the admin** takes its comments along. Renamed
+    by FTP or git, or an image renamed or uploaded again under another name:
+    the plugin cannot tell, and the comments show as orphans. Open them in
+    the list and correct **Article (route)** or **Image (file)**: they are
+    back on the site.
+  - To get rid of the others, delete them one by one in the list, or all at
+    once with **Delete orphan comments** in the Maintenance tab
+    (`bin/plugin galinf purge-orphan-comments`), which first tells how many
+    comments of vanished pages and of vanished images it is about to delete.
 
 ## Persistent thumbnails
 
@@ -465,8 +484,10 @@ Consequences:
   reused, even during a reindex.
 - Changing the **thumbnail width** (`thumb_width`) → run **Run all** in the
   Maintenance tab (new thumbnails, then purge of the old ones, now orphaned).
-- Deleting images leaves orphan thumbnails → **Purge orphan thumbnails** in
-  the Maintenance tab, or `bin/plugin galinf purge-thumbs`, to free up space.
+- Removing an image from a page in the admin deletes its thumbnail at once.
+  Thumbnails can still be left behind (images removed by FTP or git, an
+  interrupted run) → **Purge orphan thumbnails** in the Maintenance tab, or
+  `bin/plugin galinf purge-thumbs`.
 - The `galinf-thumbs/` folder must be **reachable over HTTP** (it is by
   default with Grav's `.htaccess`, like `images/`).
 - An `.htaccess` is placed there automatically with a **long browser cache**

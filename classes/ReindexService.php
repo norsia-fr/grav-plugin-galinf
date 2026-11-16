@@ -426,6 +426,30 @@ class ReindexService
     }
 
     /**
+     * Deletes the orphan comments: page gone, or image gone from its page.
+     * Nothing purges them on its own (see Comments::state): this is the
+     * admin's explicit, confirmed way to do it.
+     *
+     * @return array{deleted:int, pages:int, images:int}
+     */
+    public static function purgeOrphanComments(): array
+    {
+        @set_time_limit(0);
+        $started = microtime(true);
+        $counts  = Comments::deleteOrphans();
+        $deleted = $counts['pages'] + $counts['images'];
+
+        $db = IndexDatabase::fromConfig();
+        $db->migrate();
+        self::recordRun($db, 'orphans', [
+            'seconds' => round(microtime(true) - $started, 1),
+            'deleted' => $deleted,
+        ]);
+
+        return ['deleted' => $deleted] + $counts;
+    }
+
+    /**
      * @return array{0:int, 1:int} [number of files outside $ignore, total bytes]
      */
     private static function measureTree(string $dir, string $ignore): array
@@ -463,6 +487,9 @@ class ReindexService
             'last_indexed_at' => $db->lastIndexedAt(),
             'missing_thumbs'  => self::missingThumbs($db),
             'last_runs'       => self::lastRuns($db),
+            // Comments left without their page or their image (never purged
+            // on their own): {pages, images}.
+            'orphan_comments' => Comments::orphanCounts(),
             // No page chosen yet (default after installing): the admin says so.
             'scope_empty'     => !Indexer::fromConfig($db)->hasScope(),
             // Comment captcha that cannot work (only matters when visitors who

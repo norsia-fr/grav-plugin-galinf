@@ -72,6 +72,14 @@ config:
           field:
             type: url
             label: PLUGIN_GALINF.COMMENT_IMAGE
+        state:
+          # Virtual property: empty for a comment whose page and image exist,
+          # otherwise "Page gone" / "Image gone" (orphan comment, shown
+          # nowhere on the site). The "Page" column still shows the route the
+          # comment was attached to.
+          field:
+            type: text
+            label: PLUGIN_GALINF.COMMENT_STATE
 
     edit:
       title:
@@ -125,6 +133,9 @@ form:
       validate:
         required: true
         max: 255
+        # A site route: starts with one slash, no space. The value becomes a
+        # link in the list (see CommentObject, which checks it again).
+        pattern: '/(?!/)[^\s\\]*'
 
     file:
       type: text
@@ -133,6 +144,8 @@ form:
       validate:
         required: true
         max: 255
+        # A file name, never a path.
+        pattern: '[^/\\]+'
 
     name:
       type: text

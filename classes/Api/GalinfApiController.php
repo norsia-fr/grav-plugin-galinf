@@ -88,6 +88,18 @@ class GalinfApiController extends AbstractApiController
     }
 
     /**
+     * POST /galinf/purge-orphan-comments — deletes every orphan comment
+     * (page gone, or image gone from its page; nothing deletes them on its
+     * own). Same permission as deleting a comment in the admin list.
+     */
+    public function purgeOrphanComments(ServerRequestInterface $request): ResponseInterface
+    {
+        $this->requirePermission($request, 'admin.galinf-comments.delete');
+
+        return ApiResponse::create(ReindexService::purgeOrphanComments());
+    }
+
+    /**
      * GET /galinf/stats — number of indexed images + last indexing date.
      */
     public function stats(ServerRequestInterface $request): ResponseInterface
@@ -151,19 +163,25 @@ class GalinfApiController extends AbstractApiController
         $file  = (string) $object->getProperty('file');
         $base  = rtrim((string) ($this->grav['base_url'] ?? ''), '/');
 
+        // `image_url` is empty unless route and file have the expected shape
+        // (CommentObject): nothing else may end up in a link.
+        $image = (string) $object->getProperty('image_url');
+
         // Thumbnail: read from the index, as the gallery does. It thus
         // carries its ?v=<mtime> token (galinf-thumbs/ is served "immutable"
         // for a year: without the token, a replaced image would keep its old
         // preview). No thumbnail (animated gif, oversized image) → null, and
         // the interface falls back on the original.
-        $row   = IndexDatabase::fromConfig()->findImage(ltrim($route, '/') . '/' . $file);
+        $row   = $image !== '' ? IndexDatabase::fromConfig()->findImage(ltrim($route, '/') . '/' . $file) : null;
         $thumb = $row['thumb_path'] ?? null;
 
         return ApiResponse::create([
-            'image' => $route !== '' && $file !== '' ? $base . $route . '/' . rawurlencode($file) : null,
+            'image' => $image !== '' ? $image : null,
             'thumb' => $thumb !== null ? $base . '/' . $thumb : null,
             'file'  => $file,
             'route' => $route,
+            // '' | 'page' | 'image': orphan comment (page or image gone).
+            'state' => \Grav\Plugin\Galinf\Comments::state($route, $file),
         ]);
     }
 }
