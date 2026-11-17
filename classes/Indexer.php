@@ -94,7 +94,7 @@ class Indexer
         return new self(
             $db,
             (array) $config->get('plugins.galinf.templates', ['item']),
-            (int) $config->get('plugins.galinf.thumb_width', 500),
+            Settings::int('thumb_width'),   // bounded like in the admin form
             array_filter((array) $config->get('plugins.galinf.roots', [])),
             (array) $config->get('plugins.galinf.extensions', ['jpg', 'jpeg', 'png', 'webp', 'gif']),
             (string) $config->get('plugins.galinf.exclude_tag_article', 'nogal'),

@@ -14,6 +14,7 @@ use Grav\Plugin\Galinf\Feed;
 use Grav\Plugin\Galinf\FormCaptcha;
 use Grav\Plugin\Galinf\IndexDatabase;
 use Grav\Plugin\Galinf\Indexer;
+use Grav\Plugin\Galinf\Routes;
 use RocketTheme\Toolbox\Event\Event;
 
 /**
@@ -45,6 +46,8 @@ class GalinfPlugin extends Plugin
         'empty'               => 'The comment is empty.',
         'too_long'            => 'The comment is too long.',
         'name_required'       => 'A nickname is required.',
+        'name_too_long'       => 'The nickname is too long (30 characters at most).',
+        'name_reserved'       => 'This nickname belongs to a member of the site.',
         'captcha'             => 'Wrong anti-bot answer — please try again.',
         'captcha_expired'     => 'This question has expired — answer the new one.',
         'captcha_failed'      => 'The anti-bot check failed — please try again.',
@@ -110,6 +113,9 @@ class GalinfPlugin extends Plugin
     /** @var array<string,array{0:string,1:string}> Images whose SQLite counter must be resynced. */
     private array $pendingCommentRecount = [];
 
+    /** Whole index to update (the pages chosen in the settings changed). */
+    private bool $pendingScopeReindex = false;
+
     private ?IndexDatabase $db = null;
     private ?Indexer $indexer = null;
 
@@ -156,6 +162,9 @@ class GalinfPlugin extends Plugin
             // concerned is reindexed, deferred.
             'onApiPagesReordered'   => ['onApiPagesReordered', 0],
             'onApiPagesReorganized' => ['onApiPagesReorganized', 0],
+            // The plugin's settings saved in Admin Next: when they change
+            // WHICH images are in the gallery, the index follows by itself.
+            'onApiConfigUpdated'    => ['onApiConfigUpdated', 0],
             'onShutdown'            => ['onShutdown', 0],
             // Admin: maintenance and stats endpoints (called by the custom
             // fields of the options' Maintenance tab).
@@ -211,6 +220,8 @@ class GalinfPlugin extends Plugin
         if ($route !== '' && $file !== '') {
             $this->pendingCommentRecount[$route . '|' . $file] = [$route, $file];
         }
+        // The article's cached panel content (comments) is out of date.
+        $this->forgetMeta($route);
     }
 
     /**
@@ -237,8 +248,7 @@ class GalinfPlugin extends Plugin
         // Public feed: the dedicated route is intercepted as early as
         // possible, outside the API auth stack, for the shortest path
         // (spec §6).
-        $feedRoute = (string) $this->config->get('plugins.galinf.feed_route', '/gallery-feed.json');
-        if ($this->matchesRoute($this->grav['uri'], $feedRoute)) {
+        if ($this->matchesRoute($this->grav['uri'], Routes::get('feed_route'))) {
             $this->serveFeed();
         }
     }
@@ -253,14 +263,14 @@ class GalinfPlugin extends Plugin
 
         // Posting a comment (POST, if enabled).
         if ($this->config->get('plugins.galinf.comments_enabled', false)
-            && $this->matchesRoute($uri, (string) $this->config->get('plugins.galinf.comment_route', '/gallery-comment.json'))
+            && $this->matchesRoute($uri, Routes::get('comment_route'))
             && ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             $this->serveCommentAction();
         }
 
         // Metadata + comments (GET, if the panel is enabled).
         if ($this->config->get('plugins.galinf.show_info_sidebar', true)
-            && $this->matchesRoute($uri, (string) $this->config->get('plugins.galinf.meta_route', '/gallery-meta.json'))) {
+            && $this->matchesRoute($uri, Routes::get('meta_route'))) {
             $this->serveMeta();
         }
     }
@@ -317,94 +327,10 @@ class GalinfPlugin extends Plugin
         $page = $route !== '/' ? $this->grav['pages']->find($route) : null;
 
         if ($page instanceof PageInterface && $this->getIndexer()->isServable($page)) {
-            // Fresh Media (same reason as in the Indexer: the page's media
-            // cache can be stale after an image is added). No need to read the
-            // media if both kinds of info are hidden.
-            $items = [];
-            if ($showMeta || $showExif) {
-                try {
-                    $media = new \Grav\Common\Page\Media($page->path());
-                    $items = $media->all();
-                } catch (\Throwable $e) {
-                    // An unreadable .meta.yaml (raw non-UTF-8 bytes…) must not
-                    // kill the endpoint: answer without meta rather than a 500.
-                    $this->grav['log']->warning('galinf: unreadable metadata for ' . $route . ' — ' . $e->getMessage());
-                }
-            }
-            $extensions = array_map('strtolower', (array) $this->config->get('plugins.galinf.extensions', ['jpg', 'jpeg', 'png', 'webp', 'gif']));
-            foreach ($items as $filename => $medium) {
-                // Only what the gallery can show: neither the folder's other
-                // files (pdf, video…), nor an image hidden by tag in BOTH
-                // galleries.
-                if (!\in_array(strtolower((string) pathinfo((string) $filename, PATHINFO_EXTENSION)), $extensions, true)) {
-                    continue;
-                }
-                if ($this->getIndexer()->hiddenFlags($medium) === [1, 1]) {
-                    continue;
-                }
-                try {
-                    $m = (array) $medium->metadata();
-                } catch (\Throwable $e) {
-                    $this->grav['log']->warning('galinf: unreadable meta.yaml (' . $filename . ') — ' . $e->getMessage());
-                    continue;
-                }
-                $entry = [];
-                foreach ($m as $k => $v) {
-                    $key = (string) $k;
-                    $isExif = isset(self::EXIF_KEYS[strtolower($key)]);
-                    if ($isExif ? !$showExif : !$showMeta) {
-                        continue;
-                    }
-                    // Hiding tags are INTERNAL markers
-                    // (Indexer::hiddenFlags): they drive the gallery, they have
-                    // no business in front of the visitor. They are stripped
-                    // from the `tags` key, the only one the Indexer reads.
-                    $strip = ($key === 'tags') ? $hiddenTags : [];
-                    if (is_scalar($v)) {
-                        $v = trim((string) $v);
-                        if ($strip !== [] && $v !== '') {
-                            // Tolerates "tags: a, nogal" typed by hand.
-                            $v = implode(', ', array_filter(
-                                array_map('trim', explode(',', $v)),
-                                static fn(string $p): bool => $p !== '' && !isset($strip[mb_strtolower($p)])
-                            ));
-                        }
-                        if ($v !== '') {
-                            $entry[$key] = $v;
-                        }
-                        continue;
-                    }
-                    // List (e.g. `prompts:` in YAML): kept as an array of
-                    // lines, rendered over several lines in the sidebar.
-                    // Non-scalar items (nested list, map) are ignored —
-                    // structure not meant for display.
-                    if (is_array($v)) {
-                        $lines = [];
-                        foreach ($v as $item) {
-                            if (!is_scalar($item)) {
-                                continue;
-                            }
-                            $item = trim((string) $item);
-                            if ($item === '' || isset($strip[mb_strtolower($item)])) {
-                                continue;
-                            }
-                            $lines[] = $item;
-                        }
-                        if ($lines !== []) {
-                            $entry[$key] = $lines;
-                        }
-                    }
-                }
-                if ($entry !== []) {
-                    $meta[(string) $filename] = $entry;
-                }
-            }
-
-            // Comments: from the Flex directory (approved ones only —
-            // moderation happens in Admin Next, no longer on the front end).
-            if ($enabled) {
-                $comments = Comments::forRoute((string) $page->route(), true);
-            }
+            // Whether the page may be shown is decided on EVERY request (it
+            // is cheap); what it shows — its images' metadata, its approved
+            // comments — comes from a cache (see metaContent).
+            [$meta, $comments] = $this->metaContent($page, $enabled, $showMeta, $showExif, $hiddenTags);
         }
 
         $authed = $this->isAuthenticated();
@@ -424,6 +350,9 @@ class GalinfPlugin extends Plugin
 
         $payload = [
             'meta'             => $meta,
+            // Metadata shown in the panel at all (options): when it is and
+            // an image has none, the panel says so.
+            'meta_shown'       => $showMeta || $showExif,
             'comments'         => $comments,
             'comments_enabled' => $enabled,
             'can_comment'      => $canComment,
@@ -443,6 +372,181 @@ class GalinfPlugin extends Plugin
             : 'Cache-Control: public, max-age=60');
         echo json_encode($payload, self::JSON_FLAGS);
         exit;
+    }
+
+    /** How long the shared part of an article's metadata response is kept (s). */
+    private const META_TTL = 600;
+
+    /**
+     * The part of the metadata response that is the same for every visitor:
+     * the article's image metadata and approved comments. Reading them means
+     * scanning the article's folder (images and `.meta.yaml` files) and the
+     * comments index, the most expensive public request of the plugin: the
+     * result is kept in Grav's cache.
+     *
+     * Outdated right away by every change made through the admin, the site
+     * or the command line (page saved, media added/removed/its metadata
+     * edited, comment posted, approved, edited or deleted: see forgetMeta).
+     * A change made outside (FTP, git) shows after META_TTL at most. The
+     * settings that shape the answer are part of a signature: changing them
+     * takes effect at once.
+     *
+     * Grav's cache is split by host name and between web and command line,
+     * so deleting an entry would only reach one of them (an admin reached
+     * at another address than the site would not update it). Instead, a
+     * "generation" kept in the index database is part of the signature:
+     * bumping it outdates every cached answer, wherever it is.
+     *
+     * @param array<string,true> $hiddenTags
+     * @return array{0:array, 1:array} [meta, comments]
+     */
+    private function metaContent(PageInterface $page, bool $enabled, bool $showMeta, bool $showExif, array $hiddenTags): array
+    {
+        $route = (string) $page->route();
+        $extensions = array_map('strtolower', (array) $this->config->get('plugins.galinf.extensions', ['jpg', 'jpeg', 'png', 'webp', 'gif']));
+        $generation = (string) $this->getDb()->getMeta('meta_cache_gen');
+        $signature = md5(json_encode([
+            $generation,
+            (string) $page->path(), $enabled, $showMeta, $showExif, array_keys($hiddenTags), $extensions,
+            (string) $this->config->get('plugins.galinf.exclude_tag_article', 'nogal'),
+            (string) $this->config->get('plugins.galinf.exclude_tag_global', 'nogalinf'),
+        ]));
+
+        $cache = $this->grav['cache'];
+        $cached = $cache->fetch(self::metaCacheKey($route));
+        if (\is_array($cached) && ($cached['sig'] ?? null) === $signature) {
+            return [$cached['meta'], $cached['comments']];
+        }
+
+        // Something changed since this process last read the comments (the
+        // generation moved): Flex's own cache of the comments is also split
+        // by host name and between web and command line, so it may not have
+        // seen the change yet → reread from disk, once per generation.
+        if ($enabled && $cache->fetch('galinf-meta-flexgen') !== $generation) {
+            Comments::refresh();
+            $cache->save('galinf-meta-flexgen', $generation, self::META_TTL);
+        }
+
+        $meta = [];
+        $comments = [];
+        // Fresh Media (same reason as in the Indexer: the page's media
+        // cache can be stale after an image is added). No need to read the
+        // media if both kinds of info are hidden.
+        $items = [];
+        if ($showMeta || $showExif) {
+            try {
+                $media = new \Grav\Common\Page\Media($page->path());
+                $items = $media->all();
+            } catch (\Throwable $e) {
+                // An unreadable .meta.yaml (raw non-UTF-8 bytes…) must not
+                // kill the endpoint: answer without meta rather than a 500.
+                $this->grav['log']->warning('galinf: unreadable metadata for ' . $route . ' — ' . $e->getMessage());
+            }
+        }
+        foreach ($items as $filename => $medium) {
+            // Only what the gallery can show: neither the folder's other
+            // files (pdf, video…), nor an image hidden by tag in BOTH
+            // galleries.
+            if (!\in_array(strtolower((string) pathinfo((string) $filename, PATHINFO_EXTENSION)), $extensions, true)) {
+                continue;
+            }
+            if ($this->getIndexer()->hiddenFlags($medium) === [1, 1]) {
+                continue;
+            }
+            try {
+                $m = (array) $medium->metadata();
+            } catch (\Throwable $e) {
+                $this->grav['log']->warning('galinf: unreadable meta.yaml (' . $filename . ') — ' . $e->getMessage());
+                continue;
+            }
+            $entry = [];
+            foreach ($m as $k => $v) {
+                $key = (string) $k;
+                $isExif = isset(self::EXIF_KEYS[strtolower($key)]);
+                if ($isExif ? !$showExif : !$showMeta) {
+                    continue;
+                }
+                // Hiding tags are INTERNAL markers
+                // (Indexer::hiddenFlags): they drive the gallery, they have
+                // no business in front of the visitor. They are stripped
+                // from the `tags` key, the only one the Indexer reads.
+                $strip = ($key === 'tags') ? $hiddenTags : [];
+                if (is_scalar($v)) {
+                    $v = trim((string) $v);
+                    if ($strip !== [] && $v !== '') {
+                        // Tolerates "tags: a, nogal" typed by hand.
+                        $v = implode(', ', array_filter(
+                            array_map('trim', explode(',', $v)),
+                            static fn(string $p): bool => $p !== '' && !isset($strip[mb_strtolower($p)])
+                        ));
+                    }
+                    if ($v !== '') {
+                        $entry[$key] = $v;
+                    }
+                    continue;
+                }
+                // List (e.g. `prompts:` in YAML): kept as an array of
+                // lines, rendered over several lines in the sidebar.
+                // Non-scalar items (nested list, map) are ignored —
+                // structure not meant for display.
+                if (is_array($v)) {
+                    $lines = [];
+                    foreach ($v as $item) {
+                        if (!is_scalar($item)) {
+                            continue;
+                        }
+                        $item = trim((string) $item);
+                        if ($item === '' || isset($strip[mb_strtolower($item)])) {
+                            continue;
+                        }
+                        $lines[] = $item;
+                    }
+                    if ($lines !== []) {
+                        $entry[$key] = $lines;
+                    }
+                }
+            }
+            if ($entry !== []) {
+                $meta[(string) $filename] = $entry;
+            }
+        }
+
+        // Comments: from the Flex directory (approved ones only —
+        // moderation happens in Admin Next, no longer on the front end).
+        if ($enabled) {
+            $comments = Comments::forRoute($route, true);
+        }
+
+        $cache->save(self::metaCacheKey($route), ['sig' => $signature, 'meta' => $meta, 'comments' => $comments], self::META_TTL);
+
+        return [$meta, $comments];
+    }
+
+    private static function metaCacheKey(string $route): string
+    {
+        return 'galinf-meta-' . md5($route);
+    }
+
+    /** @var bool the generation was already bumped during this request */
+    private bool $metaForgotten = false;
+
+    /**
+     * Outdates the cached metadata responses (see metaContent). Every
+     * article at once: such changes are rare next to the reads, and the
+     * next visitor of each article rebuilds its entry.
+     */
+    private function forgetMeta(?string $route): void
+    {
+        if ($route === null || $route === '' || $this->metaForgotten) {
+            return;
+        }
+        try {
+            $this->getDb()->setMeta('meta_cache_gen', bin2hex(random_bytes(6)));
+            $this->metaForgotten = true;
+        } catch (\Throwable $e) {
+            // at worst, the cached answers expire on their own
+            $this->grav['log']->warning('galinf: could not outdate the metadata cache — ' . $e->getMessage());
+        }
     }
 
     /**
@@ -492,7 +596,7 @@ class GalinfPlugin extends Plugin
 
         // Text and nickname BEFORE the captcha: fixing an empty field must
         // not cost the visitor their token.
-        $text = trim(self::str($body['text'] ?? ''));
+        $text = Comments::cleanText(self::str($body['text'] ?? ''));
         if ($text === '') {
             $this->refuse('empty', 400);
         }
@@ -502,18 +606,29 @@ class GalinfPlugin extends Plugin
 
         // Nickname: the account's for logged-in users; otherwise a free field
         // (required depending on the option).
+        $account = '';
         if ($authed) {
             $user = $this->grav['user'];
             $name = (string) ($user->fullname ?: $user->username);
+            $account = (string) $user->username;
         } else {
-            $name = trim(self::str($body['name'] ?? ''));
+            $name = Comments::cleanName(self::str($body['name'] ?? ''));
             if ($name === '' && $this->config->get('plugins.galinf.comments_require_name', false)) {
                 $this->refuse('name_required', 400);
+            }
+            if (mb_strlen($name) > Comments::MAX_VISITOR_NAME) {
+                $this->refuse('name_too_long', 400);
+            }
+            // A visitor cannot sign with the name of an account of the site.
+            if ($name !== '' && Comments::isReservedName($name)) {
+                $this->refuse('name_reserved', 400);
             }
         }
 
         // Daily cap for the whole site (option), before any costly step.
-        // Moderators are neither limited nor counted.
+        // Moderators are neither limited nor counted. This is only a quick
+        // early refusal: the place is really taken (atomically) right before
+        // saving, see reserveCommentToday below.
         $dailyMax = $moderate ? 0 : Comments::dailyMax();
         if ($dailyMax > 0 && $this->guarded(fn() => $this->getDb()->commentsToday(), $authed) >= $dailyMax) {
             $this->refuse('daily_limit', 429);
@@ -591,18 +706,36 @@ class GalinfPlugin extends Plugin
 
         $approved = !$this->config->get('plugins.galinf.comments_moderation', false) || $moderate;
 
+        // Takes one of today's places, last step before saving: requests
+        // arriving at the same moment cannot all take the last one.
+        $reserved = false;
+        if ($dailyMax > 0) {
+            if (!$this->guarded(fn() => $this->getDb()->reserveCommentToday($dailyMax), $authed)) {
+                $this->refuse('daily_limit', 429, $retry);
+            }
+            $reserved = true;
+        }
+
+        $added = false;
         try {
             // Writes into the Flex directory; the onFlexObjectAfterSave event
             // flags the image, and the flush below resyncs the SQLite counter
             // BEFORE the response (jsonOut ends with exit, onShutdown would not
             // run).
-            Comments::add((string) $page->route(), $file, $name, $text, $approved);
-            if (!$moderate) {
-                $this->getDb()->countCommentToday();
+            Comments::add((string) $page->route(), $file, $name, $text, $approved, $account);
+            $added = true;
+            if (!$moderate && !$reserved) {
+                $this->getDb()->countCommentToday();   // "unlimited per day": counted all the same
             }
             $this->flushCommentRecounts();
         } catch (\Throwable $e) {
             $this->grav['log']->error('galinf: could not add comment — ' . $e->getMessage());
+            if ($reserved && !$added) {
+                try {
+                    $this->getDb()->releaseCommentToday();   // the place was not used
+                } catch (\Throwable $ignored) {
+                }
+            }
             $this->refuse('server', 500, $retry);
         }
 
@@ -756,20 +889,35 @@ class GalinfPlugin extends Plugin
     }
 
     /**
-     * Arithmetic question + signed token (HMAC of the answer and of the
-     * expiry), valid for 15 minutes and ONCE only: the server only remembers
-     * the tokens already presented (see captchaVerify).
+     * Arithmetic question + signed token, valid for 15 minutes and ONCE only
+     * (the server only remembers the tokens already presented, see
+     * captchaVerify).
+     *
+     * Token = `exp.nonce.mac.sig`:
+     *  - nonce: random, so that two visitors never share a token (with only
+     *    the sum and the expiry second, there were 27 possible tokens per
+     *    second, the same for everyone: a token could be taken by someone
+     *    else, or burnt in advance by a bot);
+     *  - mac: proves the token comes from this server, WITHOUT knowing the
+     *    answer — checked before anything is written;
+     *  - sig: binds the expected answer to the token.
      */
     private function captchaChallenge(): array
     {
         $a = random_int(2, 15);
         $b = random_int(2, 15);
         $exp = time() + 900;   // valid for 15 min
-        $sig = hash_hmac('sha256', ($a + $b) . '|' . $exp, $this->captchaSalt());
+        $nonce = bin2hex(random_bytes(8));
+        $key = $this->captchaSalt();
+        $mac = hash_hmac('sha256', 'token|' . $exp . '|' . $nonce, $key);
+        $sig = hash_hmac('sha256', 'answer|' . ($a + $b) . '|' . $exp . '|' . $nonce, $key);
 
         // a and b: the browser words the question in the visitor's language;
         // q = English version for a client without translations.
-        return ['provider' => 'galinf', 'a' => $a, 'b' => $b, 'q' => "What is {$a} + {$b}?", 'token' => $exp . '.' . $sig];
+        return [
+            'provider' => 'galinf', 'a' => $a, 'b' => $b, 'q' => "What is {$a} + {$b}?",
+            'token' => $exp . '.' . $nonce . '.' . $mac . '.' . $sig,
+        ];
     }
 
     /**
@@ -779,11 +927,24 @@ class GalinfPlugin extends Plugin
     {
         $wrong = 'captcha';
         $answer = trim($answer);
-        if ($answer === '' || !preg_match('/^\d+$/', $answer) || !str_contains($token, '.')) {
+        $parts = \strlen($token) <= 200 ? explode('.', $token) : [];
+        if (\count($parts) === 2) {
+            // Token issued before 2.1.0 (no nonce): the form simply gets a
+            // new question.
+            return 'captcha_expired';
+        }
+        if ($answer === '' || !preg_match('/^\d{1,4}$/', $answer) || \count($parts) !== 4) {
             return $wrong;
         }
-        [$exp, $sig] = explode('.', $token, 2);
-        if (!ctype_digit($exp)) {
+        [$exp, $nonce, $mac, $sig] = $parts;
+        if (!ctype_digit($exp) || !preg_match('/^[0-9a-f]{16}$/', $nonce)
+            || !preg_match('/^[0-9a-f]{64}$/', $mac) || !preg_match('/^[0-9a-f]{64}$/', $sig)) {
+            return $wrong;
+        }
+        $key = $this->captchaSalt();
+        // Authentic token? Checked BEFORE anything is written: a made-up
+        // token costs no write in the database.
+        if (!hash_equals(hash_hmac('sha256', 'token|' . $exp . '|' . $nonce, $key), $mac)) {
             return $wrong;
         }
         $exp = (int) $exp;
@@ -795,7 +956,7 @@ class GalinfPlugin extends Plugin
             return 'captcha_expired';
         }
         if ($exp > $now + 900) {
-            return $wrong;   // forged
+            return $wrong;   // cannot happen with an authentic token
         }
         if ($exp - $now > 897) {
             return $wrong;   // time trap: submitted less than ~3 s after issue
@@ -803,12 +964,11 @@ class GalinfPlugin extends Plugin
         // Single use, consumed BEFORE comparing the answer: a token already
         // presented is refused (no replay of a solved captcha), and a wrong
         // answer burns it too (impossible to try the 27 possible sums one by
-        // one with the same token). Only a signature in the expected format is
-        // remembered, so as not to store just anything.
-        if (!preg_match('/^[0-9a-f]{64}$/', $sig) || !$this->getDb()->captchaConsume($sig, $exp)) {
+        // one with the same token).
+        if (!$this->getDb()->captchaConsume($nonce, $exp)) {
             return $wrong;
         }
-        return hash_equals(hash_hmac('sha256', ((int) $answer) . '|' . $exp, $this->captchaSalt()), $sig)
+        return hash_equals(hash_hmac('sha256', 'answer|' . ((int) $answer) . '|' . $exp . '|' . $nonce, $key), $sig)
             ? null
             : $wrong;
     }
@@ -883,6 +1043,8 @@ class GalinfPlugin extends Plugin
         // Orphan comments (page or image gone).
         $routes->post('/galinf/purge-orphan-comments', [$controller, 'purgeOrphanComments']);
         $routes->get('/galinf/stats', [$controller, 'stats']);
+        // New precomputed shuffle for the "random" order.
+        $routes->post('/galinf/shuffle', [$controller, 'shuffle']);
         // Images too large for Grav to resize (> max_pixels).
         $routes->get('/galinf/missing-thumbs', [$controller, 'missingThumbs']);
         $routes->post('/galinf/shrink', [$controller, 'shrink']);
@@ -903,8 +1065,10 @@ class GalinfPlugin extends Plugin
         // request (the JS sends back the one set by the renderer).
         $field  = self::str($uri->query('field')) ?: (string) $config->get('plugins.galinf.sort_field', 'date');
         $cursor = self::str($uri->query('cursor')) ?: null;
-        $limit  = (int) (self::str($uri->query('limit')) ?: $config->get('plugins.galinf.batch_size', 80));
-        $max    = (int) $config->get('plugins.galinf.max_batch_size', 200);
+        $limit  = (int) (self::str($uri->query('limit')) ?: \Grav\Plugin\Galinf\Settings::int('batch_size'));
+        // Ceiling of a batch, itself bounded: a value written by hand cannot
+        // make one request read the whole index.
+        $max    = max(10, min(500, (int) $config->get('plugins.galinf.max_batch_size', 200)));
 
         // Seed (random sort): positive integer provided by the client,
         // otherwise null → Feed generates one and returns it so the client
@@ -917,13 +1081,161 @@ class GalinfPlugin extends Plugin
         $routeParam = $uri->query('route');
         $route = (is_string($routeParam) && $routeParam !== '') ? $routeParam : null;
 
-        $feed = new Feed($this->getDb(), (string) $this->grav['base_url'], $max);
+        $randomMode = (string) $config->get('plugins.galinf.random_mode', 'shared');
+        $feed = new Feed($this->getDb(), (string) $this->grav['base_url'], $max, $randomMode);
         $payload = $feed->build($sort, $cursor, $limit, $seed, $route, $field);
 
         header('Content-Type: application/json; charset=utf-8');
         header('Cache-Control: public, max-age=0');
         echo json_encode($payload, self::JSON_FLAGS);
+
+        $this->autoReshuffle($randomMode);
+        $this->autoReindex();
         exit;
+    }
+
+    /**
+     * Automatic index update (`auto_reindex` option: never | hourly |
+     * daily), for sites changed outside the admin (FTP, git): pages made
+     * private or unpublished by hand, images added or removed, hiding tags
+     * typed in a `.meta.yaml`. Done by the first feed request once the delay
+     * has passed, AFTER its response; only one request claims it. Missing
+     * thumbnails are created along the way.
+     */
+    private function autoReindex(): void
+    {
+        $every = ['hourly' => 3600, 'daily' => 86400][(string) $this->config->get('plugins.galinf.auto_reindex', 'never')] ?? 0;
+        if ($every === 0) {
+            return;
+        }
+        try {
+            $last = (int) $this->getDb()->getMeta('auto_indexed_at');
+            if (time() - $last < $every || !$this->getDb()->claimPeriodic('auto_indexed_at', $every)) {
+                return;
+            }
+            $this->finishResponse();
+            $this->reindexInBackground(Indexer::THUMBS_MISSING, 'automatic');
+        } catch (\Throwable $e) {
+            $this->grav['log']->warning('galinf: automatic reindex failed — ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Sends the response now and frees the visitor (PHP-FPM), before slow
+     * work. Grav keeps its own output buffers open: they are flushed first,
+     * otherwise the response would only leave once the work is done.
+     */
+    private function finishResponse(): void
+    {
+        static $done = false;
+        // The visitor may be gone by now: PHP must not stop the work below
+        // when it notices (it would, at the first output after the
+        // response — a second call to this method, for instance).
+        ignore_user_abort(true);
+        if ($done) {
+            return;
+        }
+        $done = true;
+        while (ob_get_level() > 0) {
+            @ob_end_flush();
+        }
+        flush();
+        if (\function_exists('fastcgi_finish_request')) {
+            fastcgi_finish_request();
+        }
+    }
+
+    /**
+     * Whole index updated after the response (automatic reindex, settings
+     * changed). The cached panel content is outdated as well.
+     */
+    private function reindexInBackground(string $thumbs, string $why): void
+    {
+        @set_time_limit(0);
+        if (\defined('GRAV_ROOT')) {
+            @chdir(GRAV_ROOT);
+        }
+        $result = \Grav\Plugin\Galinf\ReindexService::run(false, null, $thumbs);
+        $this->metaForgotten = false;
+        $this->forgetMeta('/');
+        $this->grav['log']->info(sprintf(
+            'galinf: index updated (%s): %d article(s), %d image(s), %d removed',
+            $why, $result['articles'], $result['images'], $result['pruned']
+        ));
+    }
+
+    /**
+     * Settings of the plugin saved in Admin Next. When the options that
+     * decide WHICH images are in the gallery changed (templates, source
+     * pages, formats, hiding tags), the whole index is updated after the
+     * response, without creating thumbnails: articles that left the scope
+     * leave the gallery (thumbnails included), those that entered it show
+     * their originals until "Create missing thumbnails" runs.
+     */
+    public function onApiConfigUpdated(Event $event): void
+    {
+        if (($event['scope'] ?? '') !== 'plugins/galinf' || !\is_array($event['data'] ?? null)) {
+            return;
+        }
+        $data = $event['data'];
+        // The values just saved, for the rest of this request (the reindex
+        // below reads them).
+        $this->config->set('plugins.galinf', array_replace((array) $this->config->get('plugins.galinf', []), $data));
+
+        $signature = self::scopeSignature($data);
+        try {
+            if ($this->getDb()->getMeta('scope_sig') !== $signature) {
+                $this->getDb()->setMeta('scope_sig', $signature);
+                $this->pendingScopeReindex = true;
+            }
+        } catch (\Throwable $e) {
+            $this->grav['log']->warning('galinf: could not compare the settings — ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Fingerprint of the options that decide which images are indexed.
+     */
+    private static function scopeSignature(array $c): string
+    {
+        $list = static function ($v): array {
+            $v = array_map(static fn($x) => strtolower(trim((string) $x)), array_filter((array) $v, 'is_scalar'));
+            $v = array_values(array_unique(array_filter($v, static fn($x) => $x !== '')));
+            sort($v);
+            return $v;
+        };
+
+        return md5(json_encode([
+            $list($c['templates'] ?? []), $list($c['roots'] ?? []), $list($c['extensions'] ?? []),
+            strtolower(trim((string) ($c['exclude_tag_article'] ?? 'nogal'))),
+            strtolower(trim((string) ($c['exclude_tag_global'] ?? 'nogalinf'))),
+        ]));
+    }
+
+    /**
+     * Automatic reshuffle of the precomputed random order (`random_reshuffle`
+     * option: never | daily | weekly), done by the first feed request once
+     * the delay has passed — AFTER its response is sent to the visitor.
+     * Only one request claims it (IndexDatabase::claimReshuffle).
+     */
+    private function autoReshuffle(string $randomMode): void
+    {
+        $every = ['daily' => 86400, 'weekly' => 604800][(string) $this->config->get('plugins.galinf.random_reshuffle', 'daily')] ?? 0;
+        if ($randomMode !== 'shared' || $every === 0) {
+            return;
+        }
+        try {
+            // A plain read first: the write (claim) only happens once a day
+            // or a week, not on every batch.
+            $last = (int) $this->getDb()->getMeta('shuffled_at');
+            if (time() - $last < $every || !$this->getDb()->claimReshuffle($every)) {
+                return;
+            }
+            $this->finishResponse();   // the visitor already has the batch
+            $this->getDb()->reshuffle();
+        } catch (\Throwable $e) {
+            $this->grav['log']->warning('galinf: automatic reshuffle failed — ' . $e->getMessage());
+        }
     }
 
     /**
@@ -941,6 +1253,7 @@ class GalinfPlugin extends Plugin
         if ($route === null) {
             return;
         }
+        $this->forgetMeta($route);
 
         if ($this->getIndexer()->isIndexable($object)) {
             $this->pendingReindex[$route] = $object;
@@ -978,6 +1291,9 @@ class GalinfPlugin extends Plugin
         if ($route === null) {
             return;
         }
+        // Media or metadata changed: the article's cached panel content is
+        // out of date.
+        $this->forgetMeta($route);
 
         if ($this->getIndexer()->isIndexable($object)) {
             $this->pendingReindex[$route] = $object;
@@ -1105,8 +1421,20 @@ class GalinfPlugin extends Plugin
     {
         if (empty($this->pendingReindex) && empty($this->pendingDelete)
             && empty($this->pendingSubtreeReindex) && empty($this->pendingSubtreeDelete)
-            && empty($this->pendingCommentMove) && empty($this->pendingCommentRecount)) {
+            && empty($this->pendingCommentMove) && empty($this->pendingCommentRecount)
+            && !$this->pendingScopeReindex) {
             return;
+        }
+
+        if ($this->pendingScopeReindex) {
+            // Everything is reread: the finer pending work below would be
+            // redone by it.
+            $this->pendingScopeReindex = false;
+            try {
+                $this->reindexInBackground(Indexer::THUMBS_NONE, 'settings changed');
+            } catch (\Throwable $e) {
+                $this->grav['log']->error('galinf: reindex after a settings change failed — ' . $e->getMessage());
+            }
         }
 
         // The work runs AFTER the HTTP response. On a large article

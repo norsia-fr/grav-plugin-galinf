@@ -16,12 +16,16 @@ class Feed
     private string $baseUrl;
     private int $maxLimit;
 
-    public function __construct(IndexDatabase $db, string $baseUrl, int $maxLimit = 200)
+    /** `random` order: 'shared' (precomputed shuffle) | 'live' (one per visit). */
+    private string $randomMode;
+
+    public function __construct(IndexDatabase $db, string $baseUrl, int $maxLimit = 200, string $randomMode = 'shared')
     {
         $this->db = $db;
         // Relative base_url (e.g. "/galinf"), prefixed to stored paths.
         $this->baseUrl = rtrim($baseUrl, '/');
         $this->maxLimit = $maxLimit;
+        $this->randomMode = $randomMode === 'live' ? 'live' : 'shared';
     }
 
     /**
@@ -83,8 +87,7 @@ class Feed
             'next_cursor' => $nextCursor,
             'sort'        => $sort,
             'field'       => $field,
-            'total'       => $this->db->countImages(),
-        ];
+        ] + $this->total($cursor, fn() => $this->db->countImages());
     }
 
     /**
@@ -131,8 +134,7 @@ class Feed
             'items'       => $items,
             'next_cursor' => $nextCursor,
             'sort'        => 'commented',
-            'total'       => $this->db->countCommented(),
-        ];
+        ] + $this->total($cursor, fn() => $this->db->countCommented());
     }
 
     /**
@@ -154,6 +156,9 @@ class Feed
     {
         if ($seed === null || $seed <= 0) {
             $seed = random_int(1, 2147483646);
+        }
+        if ($this->randomMode === 'shared') {
+            return $this->buildShuffled($cursor, $limit, $seed);
         }
 
         // For random, the cursor encodes (hash, id) — same int:int format.
@@ -179,8 +184,43 @@ class Feed
             'next_cursor' => $nextCursor,
             'sort'        => 'random',
             'seed'        => $seed,
-            'total'       => $this->db->countImages(),
-        ];
+        ] + $this->total($cursor, fn() => $this->db->countImages());
+    }
+
+    /**
+     * Random order, SHARED mode: the precomputed shuffle, entered at the
+     * point given by the seed (each visit has its own). Cursor
+     * (rnd, id, lap) — see IndexDatabase::fetchFeedShuffled.
+     *
+     * @return array{items: array[], next_cursor: ?string, sort: string, seed: int}
+     */
+    private function buildShuffled(?string $cursor, int $limit, int $seed): array
+    {
+        [$curKey, $curId, $curLap] = [null, null, 0];
+        $decoded = $cursor !== null && $cursor !== '' ? base64_decode(strtr($cursor, '-_', '+/'), true) : false;
+        if (\is_string($decoded) && preg_match('/^(\d{1,10}):(\d{1,19}):([01])$/', $decoded, $m)) {
+            [$curKey, $curId, $curLap] = [(int) $m[1], (int) $m[2], (int) $m[3]];
+        }
+
+        $rows = $this->db->fetchFeedShuffled($seed % 2147483647, $curKey, $curId, $curLap, $limit);
+
+        $hasMore = \count($rows) > $limit;
+        if ($hasMore) {
+            $rows = \array_slice($rows, 0, $limit);
+        }
+
+        $nextCursor = null;
+        if ($hasMore && $rows !== []) {
+            $last = $rows[\count($rows) - 1];
+            $nextCursor = rtrim(strtr(base64_encode((int) $last['rnd'] . ':' . (int) $last['id'] . ':' . (int) $last['lap']), '+/', '-_'), '=');
+        }
+
+        return [
+            'items'       => array_map(fn(array $r) => $this->mapItem($r), $rows),
+            'next_cursor' => $nextCursor,
+            'sort'        => 'random',
+            'seed'        => $seed,
+        ] + $this->total($cursor, fn() => $this->db->countImages());
     }
 
     /**
@@ -212,8 +252,19 @@ class Feed
             'items'       => $items,
             'next_cursor' => $nextCursor,
             'sort'        => 'article',
-            'total'       => $this->db->countByRoute($route),
-        ];
+        ] + $this->total($cursor, fn() => $this->db->countByRoute($route));
+    }
+
+    /**
+     * `total` (progress bar) on the FIRST batch only: counting means reading
+     * every row of the index (~18 ms for 50,000 images on a Raspberry Pi),
+     * and the browser keeps the first figure for the rest of its scroll.
+     *
+     * @return array{total?: int}
+     */
+    private function total(?string $cursor, callable $count): array
+    {
+        return $cursor === null || $cursor === '' ? ['total' => (int) $count()] : [];
     }
 
     /**

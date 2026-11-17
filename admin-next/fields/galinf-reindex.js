@@ -35,6 +35,7 @@ const ICONS = {
     force: '<path d="m17 2 4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>',
     scratch: '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5"/><path d="M3 12c0 1.7 4 3 9 3s9-1.3 9-3"/>',
     purge: '<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="m19 6-1 14H6L5 6"/><path d="M10 11v5M14 11v5"/>',
+    shuffle: '<path d="M16 3h5v5"/><path d="M4 20 21 3"/><path d="M21 16v5h-5"/><path d="m15 15 6 6"/><path d="M4 4l5 5"/>',
     orphans: '<path d="M21 15a2 2 0 0 1-2 2H8l-5 4V6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="m10 9 4 4M14 9l-4 4"/>',
 };
 const icon = (id) => `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
@@ -43,7 +44,7 @@ const icon = (id) => `<svg viewBox="0 0 24 24" width="18" height="18" fill="none
 // Grouping for display: everyday upkeep on one side, rebuilds (long or
 // destructive) on the other.
 const GROUPS = [
-    { title: 'GROUP_ROUTINE', ids: ['all', 'index', 'missing', 'purge', 'orphans'] },
+    { title: 'GROUP_ROUTINE', ids: ['all', 'index', 'missing', 'purge', 'orphans', 'shuffle'] },
     { title: 'GROUP_REBUILD', ids: ['force', 'scratch'] },
 ];
 
@@ -68,6 +69,9 @@ const ACTIONS = [
     // Orphan comments (page gone, or image gone from its page — nothing
     // deletes them on its own): one request, POST /galinf/purge-orphan-comments.
     { id: 'orphans', orphans: true, kind: 'delete', confirm: true },
+    // New precomputed shuffle for the "random" order (shared mode only):
+    // one request, POST /galinf/shuffle.
+    { id: 'shuffle', shuffle: true },
 ];
 const actText = (a, suffix = '') => T('ACT_' + a.id.toUpperCase() + suffix);
 
@@ -237,7 +241,7 @@ class GalinfReindexField extends HTMLElement {
         this._busy = true;
         this._result = null;
         this._job = { title: actText(action), done: 0, total: 0, images: 0, thumbs: 0, route: '',
-                      stop: false, phase: action.mode ? 'index' : (action.orphans ? 'orphans' : 'purge'),
+                      stop: false, phase: action.mode ? 'index' : (action.orphans || action.shuffle ? 'single' : 'purge'),
                       started: Date.now() };
         this._render();
 
@@ -283,6 +287,10 @@ class GalinfReindexField extends HTMLElement {
                     if (!p.done && wait > 0) await new Promise((r) => setTimeout(r, wait));
                 } while (!p.done && !this._job.stop);
                 parts.push(T('PART_PURGED', { n: p.deleted, size: this._humanSize(p.freed) }));
+            }
+            if (action.shuffle) {
+                const r = await this._api('POST', '/galinf/shuffle', {});
+                parts.push(T('PART_SHUFFLED', { n: r.images }));
             }
             if (action.orphans) {
                 const o = await this._api('POST', '/galinf/purge-orphan-comments', {});
@@ -336,6 +344,15 @@ class GalinfReindexField extends HTMLElement {
                                               what: T('LAST_RUN_ORPHANS', { n: run.deleted }) })
                 : now;
         }
+        if (action.shuffle && this._stats.random_mode === 'live') {
+            return T('SHUFFLE_LIVE_NOTE');
+        }
+        if (action.shuffle) {
+            return run
+                ? T('LAST_RUN', { when: dateTime(run.at), duration: this._duration(run.seconds),
+                                  what: T('PART_SHUFFLED', { n: run.images }) })
+                : T('NEVER_RUN');
+        }
         if (run) {
             const what = action.id === 'purge'
                 ? T('LAST_RUN_PURGE', { n: run.deleted, size: this._humanSize(run.freed) })
@@ -365,7 +382,7 @@ class GalinfReindexField extends HTMLElement {
         const j = this._job;
         if (!j) return '';
         const pct = j.total ? Math.round(j.done / j.total * 100) : 0;
-        if (j.phase === 'orphans') {
+        if (j.phase === 'single') {
             // A single short request: no progress to show, nothing to stop.
             return `
             <div class="prog job" role="status">
@@ -401,7 +418,7 @@ class GalinfReindexField extends HTMLElement {
                     ? ` <b class="badge ${a.kind}">${T(KINDS[a.kind])}</b>` : ''}</strong><span>${actText(a, '_DESC')}</span>
                     <em>${this._lastRunLine(a)}</em></div>
                 <button class="act ${a.primary ? 'primary' : ''} ${a.kind || ''}"
-                    data-id="${a.id}" ${off || (a.orphans && !this._orphans().total ? 'disabled' : '')}>${actText(a)}</button>
+                    data-id="${a.id}" ${off || (a.orphans && !this._orphans().total) || (a.shuffle && this._stats?.random_mode === 'live') ? 'disabled' : ''}>${actText(a)}</button>
             </div>`;
         return GROUPS.map((g) => `
             <div class="group">
@@ -424,6 +441,15 @@ class GalinfReindexField extends HTMLElement {
         if (!issue) return '';
         return `<div class="missing scope" role="status">
             <strong>${T('CAPTCHA_ISSUE_TITLE')}</strong> ${T('CAPTCHA_ISSUE_' + String(issue).toUpperCase())}</div>`;
+    }
+
+    // Route options refused (written by hand or through the API): the
+    // default is used instead, say which ones.
+    _routeHtml() {
+        const keys = this._stats?.route_issues || [];
+        if (!keys.length) return '';
+        return `<div class="missing scope" role="status">
+            <strong>${T('ROUTE_ISSUE_TITLE')}</strong> ${T('ROUTE_ISSUE_TEXT', { keys: keys.map((k) => this._esc(k)).join(', ') })}</div>`;
     }
 
     // Figures header of the block: three markers readable at a glance.
@@ -459,7 +485,9 @@ class GalinfReindexField extends HTMLElement {
         const items = m.items || [];
         const locked = this._busy || !!this._shrink;
         const off = locked ? 'disabled' : '';
-        const reducible = items.filter((i) => i.over_limit);
+        // Too large to be decoded on the server (> 100 MP): listed, not offered.
+        const canShrink = (i) => i.over_limit && !i.too_large;
+        const reducible = items.filter(canShrink);
         const selected = reducible.filter((i) => this._sel.has(i.image_path));
 
         const rows = items.map((i) => {
@@ -467,17 +495,18 @@ class GalinfReindexField extends HTMLElement {
             const err = this._errors.get(i.image_path);
             return `
             <li>
-                ${i.over_limit
+                ${canShrink(i)
                     ? `<input type="checkbox" class="pick" data-path="${path}" ${off}
                         ${this._sel.has(i.image_path) ? 'checked' : ''}>`
                     : '<span class="nopick"></span>'}
                 <span class="name">${path} — ${i.width} × ${i.height}
                 (${this._mp(i.width * i.height)} MP)${i.over_limit ? '' : ' — ' + T('MISSING_GEN_FAILED')}
-                ${i.over_limit && i.target_width
+                ${canShrink(i) && i.target_width
                     ? `<span class="target">${T('MISSING_TARGET', { width: i.target_width, height: i.target_height })}</span>` : ''}
+                ${i.too_large ? `<span class="err">${T('MISSING_TOO_LARGE')}</span>` : ''}
                 ${this._shrink?.current === i.image_path ? `<span class="doing">${T('SHRINK_DOING')}</span>` : ''}
                 ${err ? `<span class="err">${this._esc(T('SHRINK_FAILED', { reason: err }))}</span>` : ''}</span>
-                ${i.over_limit
+                ${canShrink(i)
                     ? `<button class="one" data-path="${path}" ${off}>${T('SHRINK')}</button>` : ''}
             </li>`;
         }).join('');
@@ -655,6 +684,7 @@ class GalinfReindexField extends HTMLElement {
             </style>
             ${this._scopeHtml()}
             ${this._captchaHtml()}
+            ${this._routeHtml()}
             <div class="box">
                 ${this._tilesHtml()}
                 <div class="body">
@@ -679,7 +709,7 @@ class GalinfReindexField extends HTMLElement {
 
         const root = this.shadowRoot;
         const reducible = () => (this._stats?.missing_thumbs?.items || [])
-            .filter((i) => i.over_limit).map((i) => i.image_path);
+            .filter((i) => i.over_limit && !i.too_large).map((i) => i.image_path);
         root.querySelectorAll('.pick').forEach((box) => box.addEventListener('change', () => {
             if (box.checked) this._sel.add(box.dataset.path);
             else this._sel.delete(box.dataset.path);

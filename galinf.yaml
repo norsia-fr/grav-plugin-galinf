@@ -9,6 +9,14 @@ enabled: true
 templates: []
 roots: []
 
+# Saving templates, roots, extensions or hiding tags in the admin updates
+# the index by itself (without creating thumbnails).
+#
+# Automatic index update, for sites changed outside the admin (FTP, git):
+# never | hourly | daily. Done after the response to the first visit that
+# follows the delay; missing thumbnails are created along the way.
+auto_reindex: 'never'
+
 # Image extensions included in the gallery (without the dot).
 # GIF is included (it animates in the gallery). SVG not recommended.
 extensions:
@@ -18,14 +26,16 @@ extensions:
   - webp
   - gif
 
-# Path of the SQLite file, relative to Grav's root.
-# Outside cache/ to survive a cache clear.
-db_path: 'user/data/gallery-index/gallery.sqlite'
-
 # --- Public feed (block 2) ---
+# The three public routes (feed_route here, meta_route and comment_route
+# below) are not in the admin form: change them only if a page of the site
+# already uses one of these addresses. A route must start with "/", end with
+# ".json", use plain characters (letters, digits, - _ /), stay out of the
+# admin's and the API's routes, and differ from the two others — otherwise
+# the default is used and the Maintenance tab says so.
 # Route intercepted by the plugin to serve the gallery's paginated JSON.
 feed_route: '/gallery-feed.json'
-# Default batch size and ceiling (images per request).
+# Default batch size and ceiling (images per request; ceiling 10 to 500).
 batch_size: 80
 max_batch_size: 200
 # Sort criterion of the global gallery:
@@ -38,6 +48,15 @@ sort_field: 'date'
 default_sort: 'desc'
 # Show the visitor "sort by" control (on/off).
 show_sort_control: true
+# "Random" order:
+#   shared → one precomputed shuffle for everyone, each visit starting at its
+#            own point: instant whatever the size of the gallery;
+#   live   → a different shuffle for each visit, computed on every batch:
+#            fine up to a few thousand images, slower beyond.
+random_mode: 'shared'
+# Shared mode: new shuffle drawn automatically — never | daily | weekly
+# (also on demand: Maintenance tab, `bin/plugin galinf shuffle`).
+random_reshuffle: 'daily'
 
 # --- Hide an image with a TAG ---
 # Tags to add to the `tags` key of the image's `.meta.yaml` (admin metadata

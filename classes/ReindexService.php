@@ -450,6 +450,24 @@ class ReindexService
     }
 
     /**
+     * Draws a new precomputed shuffle for the "random" order (shared mode),
+     * logged for the Maintenance tab.
+     *
+     * @return array{images:int}
+     */
+    public static function shuffle(): array
+    {
+        $started = microtime(true);
+        $db = IndexDatabase::fromConfig();
+        $db->migrate();
+        $db->reshuffle();
+        $images = $db->countAllImages();
+        self::recordRun($db, 'shuffle', ['seconds' => round(microtime(true) - $started, 1), 'images' => $images]);
+
+        return ['images' => $images];
+    }
+
+    /**
      * @return array{0:int, 1:int} [number of files outside $ignore, total bytes]
      */
     private static function measureTree(string $dir, string $ignore): array
@@ -490,6 +508,10 @@ class ReindexService
             // Comments left without their page or their image (never purged
             // on their own): {pages, images}.
             'orphan_comments' => Comments::orphanCounts(),
+            // "random" order: 'shared' (precomputed shuffle) | 'live'.
+            'random_mode'     => $config->get('plugins.galinf.random_mode', 'shared') === 'live' ? 'live' : 'shared',
+            // Route options refused (default used instead), see Routes.
+            'route_issues'    => Routes::issues(),
             // No page chosen yet (default after installing): the admin says so.
             'scope_empty'     => !Indexer::fromConfig($db)->hasScope(),
             // Comment captcha that cannot work (only matters when visitors who
@@ -601,7 +623,10 @@ class ReindexService
         $items = [];
         foreach ($db->missingThumbs($limit) as $row) {
             $row['over_limit'] = $maxPixels > 0 && $row['width'] * $row['height'] > $maxPixels;
-            if ($row['over_limit']) {
+            // Beyond what the shrink tool agrees to decode: listed, not
+            // offered for shrinking.
+            $row['too_large'] = $row['width'] * $row['height'] > ImageShrinker::MAX_DECODE_PIXELS;
+            if ($row['over_limit'] && !$row['too_large']) {
                 // Dimensions the image would have once shrunk (shown in the admin).
                 [$row['target_width'], $row['target_height']] =
                     ImageShrinker::targetSize($row['width'], $row['height'], $maxPixels);

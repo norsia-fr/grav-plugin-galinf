@@ -1,7 +1,7 @@
 name: Galinf — Infinite gallery
 slug: galinf
 type: plugin
-version: 2.0.3
+version: 2.1.0
 description: One endlessly scrolling gallery of the images of the pages you select, even tens of thousands, with a PhotoSwipe lightbox and optional comments.
 icon: images
 author:
@@ -70,6 +70,16 @@ form:
               value_only: true
               placeholder_value: jpg
 
+            auto_reindex:
+              type: select
+              label: PLUGIN_GALINF.AUTO_REINDEX
+              help: PLUGIN_GALINF.AUTO_REINDEX_HELP
+              default: never
+              options:
+                never: PLUGIN_GALINF.AUTO_REINDEX_NEVER
+                hourly: PLUGIN_GALINF.AUTO_REINDEX_HOURLY
+                daily: PLUGIN_GALINF.AUTO_REINDEX_DAILY
+
         tab_gallery:
           type: tab
           title: PLUGIN_GALINF.TAB_GALLERY
@@ -107,6 +117,25 @@ form:
                 desc: PLUGIN_GALINF.SORT_DESC
                 asc: PLUGIN_GALINF.SORT_ASC
                 random: PLUGIN_GALINF.SORT_RANDOM
+
+            random_mode:
+              type: select
+              label: PLUGIN_GALINF.RANDOM_MODE
+              help: PLUGIN_GALINF.RANDOM_MODE_HELP
+              default: shared
+              options:
+                shared: PLUGIN_GALINF.RANDOM_MODE_SHARED
+                live: PLUGIN_GALINF.RANDOM_MODE_LIVE
+
+            random_reshuffle:
+              type: select
+              label: PLUGIN_GALINF.RANDOM_RESHUFFLE
+              help: PLUGIN_GALINF.RANDOM_RESHUFFLE_HELP
+              default: daily
+              options:
+                daily: PLUGIN_GALINF.RANDOM_RESHUFFLE_DAILY
+                weekly: PLUGIN_GALINF.RANDOM_RESHUFFLE_WEEKLY
+                never: PLUGIN_GALINF.RANDOM_RESHUFFLE_NEVER
 
             show_sort_control:
               type: toggle

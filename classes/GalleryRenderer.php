@@ -49,7 +49,7 @@ class GalleryRenderer
         $base      = rtrim((string) $grav['base_url'], '/');
         $assetsRel = trim((string) $grav['locator']->findResource('plugins://galinf/assets', false), '/');
         $assetsUrl = $base . '/' . $assetsRel;
-        $feedUrl   = $base . (string) $config->get('plugins.galinf.feed_route', '/gallery-feed.json');
+        $feedUrl   = $base . Routes::get('feed_route');
 
         $cfg = static fn(string $k, $d) => $config->get('plugins.galinf.' . $k, $d);
 
@@ -60,11 +60,12 @@ class GalleryRenderer
             'data-base'          => $base,
             'data-pswp-lightbox' => $assetsUrl . '/photoswipe/photoswipe-lightbox.esm.min.js',
             'data-pswp-core'     => $assetsUrl . '/photoswipe/photoswipe.esm.min.js',
-            'data-batch'         => (int) $cfg('batch_size', 80),
-            'data-row-height'    => (int) $cfg('target_row_height', 220),
-            'data-gap'           => (int) $cfg('gap', 6),
-            'data-margin'        => (int) $cfg('preload_margin', 500),
-            'data-lookahead'     => (int) $cfg('metadata_lookahead', 800),
+            // Bounded like in the admin form (see Settings).
+            'data-batch'         => Settings::int('batch_size'),
+            'data-row-height'    => Settings::int('target_row_height'),
+            'data-gap'           => Settings::int('gap'),
+            'data-margin'        => Settings::int('preload_margin'),
+            'data-lookahead'     => Settings::int('metadata_lookahead'),
             'data-loop'          => $cfg('loop', false) ? '1' : '0',
             // Lightbox display defaults (the visitor's remembered choice —
             // localStorage — then takes precedence).
@@ -84,10 +85,10 @@ class GalleryRenderer
         // Info panel: metadata endpoint read on demand by the lightbox
         // (absent if the panel is disabled).
         if ($cfg('show_info_sidebar', true)) {
-            $attrs['data-meta'] = $base . (string) $cfg('meta_route', '/gallery-meta.json');
+            $attrs['data-meta'] = $base . Routes::get('meta_route');
             // Comment posting endpoint (if enabled).
             if ($cfg('comments_enabled', false)) {
-                $attrs['data-comment'] = $base . (string) $cfg('comment_route', '/gallery-comment.json');
+                $attrs['data-comment'] = $base . Routes::get('comment_route');
             }
         }
 
@@ -135,7 +136,11 @@ class GalleryRenderer
                 . $opt('asc', 'SORT_ASC')
                 . $opt('random', 'SORT_RANDOM')
                 . ($cfg('comments_enabled', false) ? $opt('commented', 'SORT_COMMENTED') : '')
-                . '</select></label></div>';
+                . '</select></label>'
+                // Shown by the JS while the order is "random": a new shuffle
+                // for this visitor (a new seed), nothing changes on the server.
+                . '<button type="button" class="galinf-shuffle" hidden>' . $txt('SHUFFLE') . '</button>'
+                . '</div>';
         }
 
         $html .= '<div class="galinf-runway"></div>'

@@ -27,6 +27,8 @@ class Comments
     /** Storage cap (also the admin editor's): visitors get maxLength(). */
     public const MAX_TEXT = 2000;
     public const MAX_NAME = 60;
+    /** Nickname length a visitor may type (the admin keeps MAX_NAME). */
+    public const MAX_VISITOR_NAME = 30;
     public const FLEX_TYPE = 'galinf-comments';
 
     /** Visitor length limit, `comments_max_length` option (50 to 1000). */
@@ -47,6 +49,112 @@ class Comments
             return 0;
         }
         return max(1, min(10000, (int) $config->get('plugins.galinf.comments_daily_max', 20)));
+    }
+
+    /**
+     * A visitor's nickname, cleaned: no control or invisible formatting
+     * character (line breaks, right-to-left override U+202E, zero-width
+     * characters…), runs of spaces reduced to one, trimmed.
+     */
+    public static function cleanName(string $name): string
+    {
+        // Line breaks and tabs separate words: they become spaces first.
+        $name = (string) preg_replace('/[\s\p{Z}]+/u', ' ', $name);
+        $name = (string) preg_replace('/[\p{Cc}\p{Cf}]+/u', '', $name);
+        $name = (string) preg_replace('/ {2,}/', ' ', $name);
+
+        return trim($name);
+    }
+
+    /**
+     * A comment's text, cleaned: line breaks kept (\r\n → \n), tabs turned
+     * into spaces, other control characters removed, and the invisible
+     * characters that can disguise text (writing direction overrides,
+     * zero-width spaces) removed. The zero-width joiner stays: composed
+     * emoji need it.
+     */
+    public static function cleanText(string $text): string
+    {
+        $text = str_replace(["\r\n", "\r", "\t"], ["\n", "\n", ' '], $text);
+        $text = (string) preg_replace('/[^\P{Cc}\n]+/u', '', $text);
+        $text = (string) preg_replace('/[\x{200B}\x{200E}\x{200F}\x{202A}-\x{202E}\x{2060}-\x{2064}\x{2066}-\x{2069}\x{FEFF}\x{061C}\x{00AD}]+/u', '', $text);
+
+        return trim($text);
+    }
+
+    /**
+     * Comparison form of a name: Unicode-normalized (full-width letters…),
+     * lower-case, without spaces, dots, hyphens or underscores. "Nor Sia",
+     * "norsia" and "NORSIA" compare equal.
+     */
+    public static function nameKey(string $name): string
+    {
+        if (class_exists(\Normalizer::class)) {
+            $name = (string) \Normalizer::normalize($name, \Normalizer::FORM_KC);
+        }
+
+        return (string) preg_replace('/[\s\p{Z}._\-]+/u', '', mb_strtolower(self::cleanName($name)));
+    }
+
+    /**
+     * Is this nickname taken by an account of the site (username or full
+     * name)? A visitor who is not logged in cannot sign as a member, or as
+     * an administrator.
+     */
+    public static function isReservedName(string $name): bool
+    {
+        $key = self::nameKey($name);
+
+        return $key !== '' && isset(self::reservedNames()[$key]);
+    }
+
+    /**
+     * Comparison forms of every account's username and full name. Account
+     * files are only reread when one of them changes (same file count and
+     * latest modification time → cached list).
+     *
+     * @return array<string,true>
+     */
+    private static function reservedNames(): array
+    {
+        $grav = Grav::instance();
+        $dir  = $grav['locator']->findResource('account://', true);
+        if (!\is_string($dir) || !is_dir($dir)) {
+            return [];
+        }
+
+        // Regular and Flex "file" storage: <user>.yaml; Flex "folder"
+        // storage: <user>/user.yaml.
+        $files = array_merge(glob($dir . '/*.yaml') ?: [], glob($dir . '/*/user.yaml') ?: []);
+        $stamp = 0;
+        foreach ($files as $file) {
+            $stamp = max($stamp, (int) @filemtime($file));
+        }
+        $cacheKey = 'galinf-reserved-names-' . md5($dir . '|' . \count($files) . '|' . $stamp);
+        $cache = $grav['cache'];
+        $names = $cache->fetch($cacheKey);
+        if (\is_array($names)) {
+            return $names;
+        }
+
+        $names = [];
+        foreach ($files as $file) {
+            $username = basename($file) === 'user.yaml' ? basename(\dirname($file)) : basename($file, '.yaml');
+            $names[self::nameKey($username)] = true;
+            try {
+                $data = \Grav\Common\File\CompiledYamlFile::instance($file)->content();
+                $full = \is_array($data) && \is_string($data['fullname'] ?? null) ? $data['fullname'] : '';
+                if ($full !== '') {
+                    $names[self::nameKey($full)] = true;
+                }
+            } catch (\Throwable $e) {
+                // unreadable account file: its username is still reserved
+            }
+        }
+        unset($names['']);
+        $cache->save($cacheKey, $names, 3600);
+
+        return $names;
     }
 
     /**
@@ -117,6 +225,8 @@ class Comments
                 'text'     => (string) $object->getProperty('text'),
                 'date'     => (string) $object->getProperty('date'),
                 'approved' => !empty($object->getProperty('approved')),
+                // Posted by a logged-in member (never the account name itself).
+                'member'   => (string) $object->getProperty('user') !== '',
             ];
         }
 
@@ -133,7 +243,7 @@ class Comments
      *
      * @return array The comment created.
      */
-    public static function add(string $route, string $file, string $name, string $text, bool $approved): array
+    public static function add(string $route, string $file, string $name, string $text, bool $approved, string $user = ''): array
     {
         $dir = self::directory();
         if (!$dir) {
@@ -148,6 +258,10 @@ class Comments
             'date'     => date('c'),
             'approved' => $approved,
         ];
+        if ($user !== '') {
+            // Account of a logged-in member: the comment is shown as theirs.
+            $data['user'] = $user;
+        }
 
         $object = $dir->createObject($data);
         $object->save();

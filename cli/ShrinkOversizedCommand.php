@@ -34,7 +34,12 @@ class ShrinkOversizedCommand extends ConsoleCommand
         $this->initializePlugins();
 
         $missing = ReindexService::missingThumbsList(100000);
-        $targets = array_values(array_filter($missing['items'], static fn (array $i): bool => $i['over_limit']));
+        $targets = array_values(array_filter($missing['items'], static fn (array $i): bool => $i['over_limit'] && empty($i['too_large'])));
+        foreach ($missing['items'] as $item) {
+            if (!empty($item['too_large'])) {
+                $io->writeln(sprintf('<comment>!</comment> %s — %d × %d: more than 100 megapixels, too large to be shrunk on the server (shrink it on a computer, then upload it again)', $item['image_path'], $item['width'], $item['height']));
+            }
+        }
 
         if (!$targets) {
             $io->success('No image beyond the limit.');

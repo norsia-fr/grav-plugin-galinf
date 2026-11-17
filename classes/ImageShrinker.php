@@ -23,6 +23,17 @@ class ImageShrinker
     private const WEBP_QUALITY = 90;
 
     /**
+     * Largest image this tool agrees to decode (pixels). Decoding needs
+     * about 5 bytes per pixel whatever the file size: a heavily compressed
+     * PNG of a few hundred KB can ask for gigabytes and bring the server
+     * down. 100 megapixels ≈ 500 MB.
+     */
+    public const MAX_DECODE_PIXELS = 100000000;
+
+    /** Temporary files left by an interrupted shrink are removed after this delay (s). */
+    private const STALE_TMP = 3600;
+
+    /**
      * @return array{old_width:int, old_height:int, width:int, height:int}
      * @throws ShrinkError code translated by the admin + English sentence (CLI)
      */
@@ -49,6 +60,9 @@ class ImageShrinker
         if ($w <= 0 || $h <= 0 || $h <= intdiv($maxPixels, $w)) {
             throw new ShrinkError('under_limit', 'This image does not exceed the limit.');
         }
+        if ($w * $h > self::MAX_DECODE_PIXELS) {
+            throw new ShrinkError('too_large', 'This image is too large to be shrunk on the server (more than 100 megapixels): shrink it on a computer, then upload it again.');
+        }
 
         $reader = [IMAGETYPE_JPEG => 'imagecreatefromjpeg', IMAGETYPE_PNG => 'imagecreatefrompng',
                    IMAGETYPE_WEBP => 'imagecreatefromwebp'][$type] ?? null;
@@ -58,8 +72,12 @@ class ImageShrinker
 
         [$nw, $nh] = self::targetSize($w, $h, $maxPixels);
 
-        // Decoding several tens of megapixels takes 100 to 200 MB.
-        @ini_set('memory_limit', '-1');
+        self::removeStaleTemporaryFiles(\dirname($file));
+
+        // Decoding takes about 5 bytes per pixel, for the source and for the
+        // result, plus a margin: the memory limit is raised to what THIS
+        // image needs (never lowered, never lifted altogether).
+        self::raiseMemoryLimit(($w * $h + $nw * $nh) * 5 + 64 * 1024 * 1024);
         @set_time_limit(0);
 
         $src = @$reader($file);
@@ -105,6 +123,37 @@ class ImageShrinker
         clearstatcache(true, $file);
 
         return ['old_width' => $w, 'old_height' => $h, 'width' => $finalW, 'height' => $finalH];
+    }
+
+    /**
+     * Raises PHP's memory limit to $bytes if it is lower (an unlimited or
+     * higher limit is left alone).
+     */
+    private static function raiseMemoryLimit(int $bytes): void
+    {
+        $current = trim((string) ini_get('memory_limit'));
+        if ($current === '-1') {
+            return;
+        }
+        $value = (int) $current;
+        $unit  = strtolower(substr($current, -1));
+        $value *= ['g' => 1073741824, 'm' => 1048576, 'k' => 1024][$unit] ?? 1;
+        if ($value < $bytes) {
+            @ini_set('memory_limit', (string) $bytes);
+        }
+    }
+
+    /**
+     * Removes the `.galinf-shrink-*.tmp` files an interrupted shrink left in
+     * the page folder (older than STALE_TMP: never one being written).
+     */
+    private static function removeStaleTemporaryFiles(string $dir): void
+    {
+        foreach (glob($dir . '/.galinf-shrink-*.tmp') ?: [] as $tmp) {
+            if (is_file($tmp) && (int) @filemtime($tmp) < time() - self::STALE_TMP) {
+                @unlink($tmp);
+            }
+        }
     }
 
     /**

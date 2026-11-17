@@ -1,3 +1,26 @@
+# v2.1.0
+## 11/17/2026
+
+1. [](#new)
+    * **Precomputed "random" order** (new default, Gallery tab): one shuffle shared by everyone, each visit starting at its own point; every batch is instant whatever the size of the gallery (0.6 ms instead of 98 ms for 50,000 images on a Raspberry Pi). Reshuffled automatically every day (or week, or never) and on demand in the Maintenance tab (`bin/plugin galinf shuffle`). The previous behavior, a different shuffle for each visit, remains available ("Different for each visit").
+    * **The index follows the settings**: saving the plugin's settings in the admin with other templates, source pages, image formats or hiding tags updates the whole index right after the save (without creating thumbnails). Articles taken out of the gallery left it only after a manual "Run all".
+    * **Automatic index update** (General tab): never (default), every hour or every day, for sites changed outside the admin (FTP, git). The first visit after the delay does it once it has been served; missing thumbnails are created along the way.
+    * **Shuffle button** for visitors, next to the sort menu while the order is random: a new order for them, nothing changes for the others.
+    * **Comments of logged-in members** show a ✓ "Member of the site" mark next to their name, and the comments list of the admin has an **Account** column. Comments posted before this version have no mark.
+2. [](#improved)
+    * **Info panel**: an image without any metadata now shows a discreet "No information for this image." instead of an empty space.
+    * The gallery's image total (progress bar) is counted on the first batch only, instead of on every batch.
+    * **Shrinking oversized images** (Maintenance tab): an image of more than 100 megapixels is no longer decoded on the server — it is listed with the reason, to be shrunk on a computer. A small but very compressed file could ask for gigabytes of memory and bring the server down. The memory limit is now raised to what the image needs instead of being lifted, and the temporary files of an interrupted shrink are cleaned up.
+    * **Faster info panel**: the metadata and comments of an article are kept in Grav's cache instead of being reread for every visitor (about 7 times as many requests per second on a Raspberry Pi). Any change made in the admin, on the site or from the command line shows at once; a `.meta.yaml` file changed by FTP or git shows within 10 minutes.
+    * **Nicknames**: 30 characters at most (longer ones are refused with a message instead of being cut off), extra spaces removed. A visitor who is not logged in can no longer sign with the username or the full name of an account of the site, an administrator's included. Invisible characters that can disguise a name or a text (right-to-left override, zero-width spaces, control characters) are removed.
+    * **Anti-bot question (Galinf)**: each question now has its own token. Two visitors who opened the comment form in the same second with the same sum shared one token, and the second one was refused; a bot could also use up the tokens in advance and block anonymous comments. A made-up token is now refused before anything is written on the server. A visitor whose form was open during the update simply gets a new question.
+    * README: what the gallery's addresses expose on a site closed as a whole, why a hiding tag is not a protection, which page protection is recognized, what the Galinf question stops, and the Nginx rule for the thumbnails' long cache.
+3. [](#bugfix)
+    * **Security**: the `db_path` option (location of the index database, not in the admin form) is removed: the database is always in `user/data/gallery-index/`. Anyone allowed to write the plugin's configuration could place it where the web server serves it, or make "Delete the plugin data" delete any file. A value still set in `user/config/plugins/galinf.yaml` is ignored.
+    * **Security**: the three public routes (`feed_route`, `meta_route`, `comment_route`, not in the admin form either) are checked when read: they must start with `/`, end with `.json`, use plain characters, stay out of the admin's and the API's routes and differ from one another. A refused value is replaced by the default, and the Maintenance tab says which one. `max_batch_size` is bounded (10 to 500).
+    * Numeric settings (thumbnail width, batch size, row height, spacing, preload margin, metadata buffer) are kept within the admin form's bounds even when they come from the configuration file or the API: a value out of range is brought back to the nearest bound.
+    * **Comments per day** and the **per-address limit** (5 comments in 10 minutes) are now exact under simultaneous submissions. A burst of comments sent at the same moment could go a few past the daily cap (3 accepted instead of 1 when 1 place was left).
+
 # v2.0.3
 ## 11/16/2026
 

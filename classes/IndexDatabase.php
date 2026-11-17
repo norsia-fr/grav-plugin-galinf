@@ -25,15 +25,22 @@ class IndexDatabase
     }
 
     /**
-     * Database designated by the plugin configuration (`db_path`, relative to
-     * Grav's root). Single entry point: plugin, service, API and CLI.
+     * The gallery's database, always at the same place:
+     * user/data/gallery-index/gallery.sqlite (a folder the web server never
+     * serves). Single entry point: plugin, service, API and CLI.
+     *
+     * The old `db_path` option is no longer read: a path chosen in the
+     * configuration could put the database where the web server serves it,
+     * and "Delete the plugin data" deletes that file wherever it is.
      */
     public static function fromConfig(): self
     {
-        $root = \defined('GRAV_ROOT') ? GRAV_ROOT : getcwd();
-        $path = (string) Grav::instance()['config']->get('plugins.galinf.db_path', 'user/data/gallery-index/gallery.sqlite');
+        $data = Grav::instance()['locator']->findResource('user-data://', true, true);
+        if (!\is_string($data) || $data === '') {
+            $data = (\defined('GRAV_ROOT') ? GRAV_ROOT : getcwd()) . '/user/data';
+        }
 
-        return new self($root . '/' . ltrim($path, '/'));
+        return new self(rtrim($data, '/') . '/gallery-index/gallery.sqlite');
     }
 
     public function path(): string
@@ -125,11 +132,20 @@ class IndexDatabase
         // date. Filtered on EVERY request by live().
         $this->addColumnIfMissing('images', 'publish_at', 'INTEGER');
         $this->addColumnIfMissing('images', 'unpublish_at', 'INTEGER');
+        // Precomputed shuffle ("random" order, shared mode): a random key per
+        // image, indexed, so that a batch costs the same whatever the size of
+        // the gallery. Filled once when the column is created; every image
+        // indexed afterwards gets its own key (replaceArticle), and
+        // reshuffle() draws them all again.
+        if ($this->addColumnIfMissing('images', 'rnd', 'INTEGER')) {
+            $db->exec('UPDATE images SET rnd = ' . self::RANDOM_KEY);
+        }
 
         $db->exec('CREATE INDEX IF NOT EXISTS idx_published_at  ON images(published_at)');
         $db->exec('CREATE INDEX IF NOT EXISTS idx_article_route ON images(article_route)');
         $db->exec('CREATE INDEX IF NOT EXISTS idx_folder_sort   ON images(folder_sort, id)');
         $db->exec('CREATE INDEX IF NOT EXISTS idx_last_comment  ON images(last_comment_at, id)');
+        $db->exec('CREATE INDEX IF NOT EXISTS idx_rnd           ON images(rnd, id)');
 
         // Anti-burst safeguard for comment writes (per hashed IP).
         $db->exec(<<<'SQL'
@@ -148,8 +164,9 @@ class IndexDatabase
             );
         SQL);
 
-        // Captcha tokens already presented: a token is only used ONCE, right
-        // or wrong answer (no replay, no trying every sum).
+        // Captcha tokens already presented (their nonce; `sig` is the
+        // historical column name): a token is only used ONCE, right or wrong
+        // answer (no replay, no trying every sum).
         $db->exec(<<<'SQL'
             CREATE TABLE IF NOT EXISTS captcha_used (
                 sig TEXT    PRIMARY KEY,
@@ -165,19 +182,26 @@ class IndexDatabase
         SQL);
     }
 
+    /** SQL expression drawing a random key (0 to 2^31 - 2). */
+    private const RANDOM_KEY = 'abs(random() % 2147483647)';
+
     /**
      * Adds a column if it does not exist yet (idempotent migration).
+     *
+     * @return bool true when the column was just added
      */
-    private function addColumnIfMissing(string $table, string $column, string $type): void
+    private function addColumnIfMissing(string $table, string $column, string $type): bool
     {
         $db = $this->db ?? $this->connect();
         $res = $db->query("PRAGMA table_info({$table})");
         while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
             if ($row['name'] === $column) {
-                return;
+                return false;
             }
         }
         $db->exec("ALTER TABLE {$table} ADD COLUMN {$column} {$type}");
+
+        return true;
     }
 
     /**
@@ -215,9 +239,9 @@ class IndexDatabase
 
             $ins = $db->prepare(<<<'SQL'
                 INSERT INTO images
-                    (image_path, thumb_path, width, height, article_route, article_title, published_at, sort_in_article, animated, folder_sort, comments_count, last_comment_at, hide_article, hide_global, publish_at, unpublish_at)
+                    (image_path, thumb_path, width, height, article_route, article_title, published_at, sort_in_article, animated, folder_sort, comments_count, last_comment_at, hide_article, hide_global, publish_at, unpublish_at, rnd)
                 VALUES
-                    (:image_path, :thumb_path, :width, :height, :route, :title, :published_at, :sort, :animated, :folder_sort, :ccount, :clast, :hide_article, :hide_global, :publish_at, :unpublish_at)
+                    (:image_path, :thumb_path, :width, :height, :route, :title, :published_at, :sort, :animated, :folder_sort, :ccount, :clast, :hide_article, :hide_global, :publish_at, :unpublish_at, abs(random() % 2147483647))
             SQL);
 
             foreach ($rows as $row) {
@@ -464,6 +488,97 @@ class IndexDatabase
     }
 
     /**
+     * Batch for the `random` sort in SHARED mode: the images in the order of
+     * their precomputed key (`rnd`, indexed), starting from $start and
+     * wrapping around to the beginning — one shuffled sequence for everyone,
+     * each visit entering it at its own point. A batch reads only the rows
+     * it returns, whatever the size of the gallery.
+     *
+     * Keyset cursor (rnd, id, lap): lap 0 = from $start to the end, lap 1 =
+     * from the beginning back to $start.
+     *
+     * @return array[] Rows (with `rnd` and `lap`); one more if a next batch exists.
+     */
+    public function fetchFeedShuffled(int $start, ?int $curKey, ?int $curId, int $curLap, int $limit): array
+    {
+        $db   = $this->connect();
+        $rows = [];
+
+        foreach ([0, 1] as $lap) {
+            if ($lap < $curLap) {
+                continue;
+            }
+            $where = 'WHERE hide_global = 0 AND ' . $this->live()
+                . ($lap === 0 ? ' AND rnd >= :start' : ' AND rnd < :start');
+            $after = $lap === $curLap && $curKey !== null && $curId !== null;
+            if ($after) {
+                $where .= ' AND ((rnd > :ck) OR (rnd = :ck AND id > :ci))';
+            }
+            $stmt = $db->prepare("SELECT id, image_path, thumb_path, animated, width, height,
+                                         article_route, article_title, published_at, comments_count, rnd
+                                  FROM images {$where}
+                                  ORDER BY rnd ASC, id ASC
+                                  LIMIT :lim");
+            $stmt->bindValue(':start', $start, SQLITE3_INTEGER);
+            if ($after) {
+                $stmt->bindValue(':ck', $curKey, SQLITE3_INTEGER);
+                $stmt->bindValue(':ci', $curId, SQLITE3_INTEGER);
+            }
+            $stmt->bindValue(':lim', $limit + 1 - \count($rows), SQLITE3_INTEGER);
+            $res = $stmt->execute();
+            while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+                $row['lap'] = $lap;
+                $rows[] = $row;
+            }
+            if (\count($rows) > $limit) {
+                break;
+            }
+        }
+
+        return $rows;
+    }
+
+    /**
+     * Draws a new precomputed shuffle for every image (shared random mode).
+     * About half a second for 50,000 images on a Raspberry Pi.
+     */
+    public function reshuffle(): void
+    {
+        $db = $this->connect();
+        $db->exec('UPDATE images SET rnd = ' . self::RANDOM_KEY);
+        $this->setMeta('shuffled_at', (string) time());
+    }
+
+    /**
+     * Claims the automatic reshuffle when the last one is older than
+     * $interval seconds: true for ONE request only (a single conditional
+     * write), the one that then reshuffles.
+     */
+    public function claimReshuffle(int $interval): bool
+    {
+        return $this->claimPeriodic('shuffled_at', $interval);
+    }
+
+    /**
+     * Claims a periodic task recorded under meta $key (a timestamp) when its
+     * last run is older than $interval seconds: true for ONE request only.
+     */
+    public function claimPeriodic(string $key, int $interval): bool
+    {
+        $db  = $this->connect();
+        $now = time();
+        $stmt = $db->prepare("INSERT INTO meta (key, value) VALUES (:key, :now)
+                              ON CONFLICT(key) DO UPDATE SET value = :now
+                              WHERE CAST(value AS INTEGER) <= :limit");
+        $stmt->bindValue(':key', $key, SQLITE3_TEXT);
+        $stmt->bindValue(':now', (string) $now, SQLITE3_TEXT);
+        $stmt->bindValue(':limit', $now - $interval, SQLITE3_INTEGER);
+        $stmt->execute();
+
+        return $db->changes() === 1;
+    }
+
+    /**
      * Batch of ONE article's images (article page), in upload order
      * (`sort_in_article`), paginated by cursor (sort_in_article, id).
      *
@@ -575,27 +690,49 @@ class IndexDatabase
      * Write safeguard: at most $max writes per (hashed) IP over the $window
      * (s). Returns false if the limit is reached, otherwise records the write
      * and returns true.
+     *
+     * Count and record happen in ONE write transaction (BEGIN IMMEDIATE takes
+     * the write lock first): requests arriving at the same moment are served
+     * one after the other, so a burst cannot all see "4 of 5" and all pass.
      */
     public function rateLimitAllow(string $ipHash, int $max = 5, int $window = 600): bool
     {
         $db  = $this->connect();
         $now = time();
 
-        $db->exec('DELETE FROM comment_rate WHERE ts < ' . ($now - $window));
+        $this->begin($db);
+        try {
+            $db->exec('DELETE FROM comment_rate WHERE ts < ' . ($now - $window));
 
-        $stmt = $db->prepare('SELECT COUNT(*) AS n FROM comment_rate WHERE ip_hash = :h');
-        $stmt->bindValue(':h', $ipHash, SQLITE3_TEXT);
-        $n = (int) ($stmt->execute()->fetchArray(SQLITE3_ASSOC)['n'] ?? 0);
-        if ($n >= $max) {
-            return false;
+            $stmt = $db->prepare('SELECT COUNT(*) AS n FROM comment_rate WHERE ip_hash = :h');
+            $stmt->bindValue(':h', $ipHash, SQLITE3_TEXT);
+            $n = (int) ($stmt->execute()->fetchArray(SQLITE3_ASSOC)['n'] ?? 0);
+
+            $allowed = $n < $max;
+            if ($allowed) {
+                $ins = $db->prepare('INSERT INTO comment_rate (ip_hash, ts) VALUES (:h, :t)');
+                $ins->bindValue(':h', $ipHash, SQLITE3_TEXT);
+                $ins->bindValue(':t', $now, SQLITE3_INTEGER);
+                $ins->execute();
+            }
+            $db->exec('COMMIT');
+        } catch (\Throwable $e) {
+            @$db->exec('ROLLBACK');
+            throw $e;
         }
 
-        $ins = $db->prepare('INSERT INTO comment_rate (ip_hash, ts) VALUES (:h, :t)');
-        $ins->bindValue(':h', $ipHash, SQLITE3_TEXT);
-        $ins->bindValue(':t', $now, SQLITE3_INTEGER);
-        $ins->execute();
+        return $allowed;
+    }
 
-        return true;
+    /**
+     * Opens a write transaction right away (waiting up to the busy timeout
+     * for the lock). A failure must not let the caller go on unprotected.
+     */
+    private function begin(SQLite3 $db): void
+    {
+        if (!$db->exec('BEGIN IMMEDIATE')) {
+            throw new RuntimeException('Could not lock the index database: ' . $db->lastErrorMsg());
+        }
     }
 
     /**
@@ -609,7 +746,52 @@ class IndexDatabase
     }
 
     /**
-     * Counts one more comment for today; the previous days are dropped.
+     * Reserves one of today's places, if fewer than $max are taken: returns
+     * true and counts it, otherwise false. A single statement (the counter
+     * only grows while under the cap), so simultaneous requests cannot all
+     * take the last place. The previous days are dropped.
+     */
+    public function reserveCommentToday(int $max): bool
+    {
+        $db  = $this->connect();
+        $day = date('Y-m-d');
+
+        $this->begin($db);
+        try {
+            $del = $db->prepare('DELETE FROM comment_daily WHERE day <> :d');
+            $del->bindValue(':d', $day, SQLITE3_TEXT);
+            $del->execute();
+
+            $ins = $db->prepare('INSERT INTO comment_daily (day, n) VALUES (:d, 1)
+                                 ON CONFLICT(day) DO UPDATE SET n = n + 1 WHERE n < :max');
+            $ins->bindValue(':d', $day, SQLITE3_TEXT);
+            $ins->bindValue(':max', $max, SQLITE3_INTEGER);
+            $ins->execute();
+            $taken = $db->changes() === 1;
+
+            $db->exec('COMMIT');
+        } catch (\Throwable $e) {
+            @$db->exec('ROLLBACK');
+            throw $e;
+        }
+
+        return $taken;
+    }
+
+    /**
+     * Gives back a place reserved by reserveCommentToday() when the comment
+     * could not be saved after all.
+     */
+    public function releaseCommentToday(): void
+    {
+        $stmt = $this->connect()->prepare('UPDATE comment_daily SET n = n - 1 WHERE day = :d AND n > 0');
+        $stmt->bindValue(':d', date('Y-m-d'), SQLITE3_TEXT);
+        $stmt->execute();
+    }
+
+    /**
+     * Counts one more comment for today, without any cap (site set to
+     * "unlimited per day"); the previous days are dropped.
      */
     public function countCommentToday(): void
     {
@@ -652,8 +834,8 @@ class IndexDatabase
     }
 
     /**
-     * Marks a captcha token as consumed. Returns false if it already was
-     * (replay). Inserting on the primary key makes the operation atomic: two
+     * Marks a captcha token (its unique nonce) as consumed. Returns false if
+     * it already was (replay). Inserting on the primary key makes the operation atomic: two
      * simultaneous requests with the same token only let one through. Expired
      * rows are purged along the way (a token lives 15 minutes).
      */

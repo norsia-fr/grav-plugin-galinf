@@ -55,6 +55,11 @@ config:
           link: edit
           field:
             label: PLUGIN_GALINF.COMMENT_NAME
+        user:
+          # Account of the member who posted it (empty: visitor not logged
+          # in). Shown with a "member" mark in the lightbox.
+          field:
+            label: PLUGIN_GALINF.COMMENT_USER
         text:
           link: edit
           field:
@@ -152,6 +157,12 @@ form:
       label: PLUGIN_GALINF.COMMENT_NAME
       validate:
         max: 60
+
+    user:
+      type: text
+      label: PLUGIN_GALINF.COMMENT_USER
+      help: PLUGIN_GALINF.COMMENT_USER_HELP
+      readonly: true
 
     text:
       type: textarea

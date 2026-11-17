@@ -165,6 +165,7 @@
     // not on this site): left alone.
     if (!runway || !feed) return;
     var sortSelect = root.querySelector('.galinf-sort');
+    var shuffleBtn = root.querySelector('.galinf-shuffle');
 
     // Elements written by the server (sort menu): in the chosen language.
     Array.prototype.forEach.call(root.querySelectorAll('[data-galinf-t]'), function (el) {
@@ -587,6 +588,17 @@
     if (sortSelect && !article) {
       sortSelect.value = sort;
       sortSelect.addEventListener('change', function () { reset(sortSelect.value); });
+    }
+    /* "Shuffle" button, while the order is random: a new seed for THIS
+       visitor (reset() forgets the current one), nothing changes for the
+       others. */
+    function syncShuffle() {
+      if (shuffleBtn) shuffleBtn.hidden = article || sort !== 'random';
+    }
+    if (shuffleBtn) {
+      shuffleBtn.addEventListener('click', function () { reset('random'); });
+      if (sortSelect) sortSelect.addEventListener('change', syncShuffle);
+      syncShuffle();
     }
 
     var ticking = false;

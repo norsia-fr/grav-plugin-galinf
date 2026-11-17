@@ -17,7 +17,7 @@ use Grav\Framework\Flex\Interfaces\FlexStorageInterface;
 class CommentIndex extends GenericIndex
 {
     // Changing the version forces the index file to be rebuilt.
-    const VERSION = parent::VERSION . '.galinf.4';
+    const VERSION = parent::VERSION . '.galinf.5';
 
     /**
      * Enables the enriched index FILE (index.yaml next to the storage), like
@@ -67,6 +67,7 @@ class CommentIndex extends GenericIndex
         $meta['file']     = (string) ($data['file'] ?? '');
         $meta['approved'] = !empty($data['approved']) ? 1 : 0;
         $meta['date']     = (string) ($data['date'] ?? '');
+        $meta['user']     = (string) ($data['user'] ?? '');   // sortable "Account" column
         // The admin list's "Page" and "Image" columns (url/image_url virtual
         // properties) are sortable like every SPA column (clickable headers,
         // cannot be disabled): their sort keys are indexed — route and

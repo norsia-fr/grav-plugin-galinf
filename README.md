@@ -22,7 +22,7 @@ shortcode, or into a template with a Twig function.
   anti-bot protection: built in, or Cap / Cloudflare Turnstile / Google
   reCAPTCHA through the Form plugin.
 - **Several sort orders**: by date, by the manual page order set in the admin,
-  random, commented images.
+  random (with a "Shuffle" button for visitors), commented images.
 - **Animated GIFs** animate in the gallery.
 - **Hide an image with a simple tag**, without deleting it.
 - **An index that keeps itself up to date** when an article is saved or an
@@ -154,10 +154,22 @@ option explains itself in place.
 | Tab | What you set there |
 |---|---|
 | **General** | Which pages are indexed: templates, source pages or folders (e.g. `/blog`), image formats. |
-| **Gallery** | Batch size, sort criterion and order, visitor sort menu, row height, spacing, thumbnail width, hiding tags, performance settings. |
+| **Gallery** | Batch size, sort criterion and order, "random" order (precomputed or different for each visit) and its automatic reshuffle, visitor sort menu, row height, spacing, thumbnail width, hiding tags, performance settings. |
 | **Lightbox** | Loop, info panel, thumbnail strip, and whether to show each toolbar button. |
 | **Comments** | Enabling, pre-moderation, who can comment, required nickname, maximum length and counter, anti-bot check, comments per day. |
-| **Maintenance** | Index status, reindexing, thumbnail purge, oversized images, data deletion before uninstalling. |
+| **Maintenance** | Index status, reindexing, thumbnail purge, orphan comments, reshuffle of the random order, oversized images, data deletion before uninstalling. |
+
+**"Random" order.** Two ways, set in the Gallery tab:
+- **Precomputed** (default): one shuffle shared by everyone, each visit
+  entering it at its own point. Every batch is instant, whatever the size of
+  the gallery. A new shuffle is drawn automatically every day (or week, or
+  never), and on demand in the Maintenance tab (`bin/plugin galinf shuffle`).
+- **Different for each visit**: a new shuffle for every visitor, computed on
+  every batch — fine up to a few thousand images, slower beyond (about
+  0.1 s per batch for 50,000 images on a Raspberry Pi).
+
+While the order is random, a **Shuffle** button next to the sort menu gives
+the visitor a new order; it changes nothing for the other visitors.
 
 Without the admin, copy `user/plugins/galinf/galinf.yaml` to
 `user/config/plugins/galinf.yaml` and edit that copy.
@@ -193,6 +205,7 @@ bin/plugin galinf reindex --no-thumbs         # index only: no thumbnail created
 bin/plugin galinf reindex --force-thumbs      # recreates every thumbnail, even existing ones
 bin/plugin galinf reindex --clear             # starts again from an empty index
 bin/plugin galinf purge-thumbs                # deletes orphan thumbnails
+bin/plugin galinf shuffle                     # new precomputed shuffle for the "random" order
 bin/plugin galinf purge-orphan-comments [--yes]   # deletes the comments whose page or image no longer exists
 bin/plugin galinf shrink-oversized [--yes]    # shrinks oversized images in place (originals replaced)
 bin/plugin galinf uninstall-data [--comments] [--yes]   # before uninstalling: deletes index and thumbnails
@@ -251,10 +264,16 @@ The plugin never reads pages on the fly: the gallery relies on an **index**
 
 - **Automatic** from the admin: saving, copying, moving, reordering or
   deleting an article (or a parent page: its articles follow), adding or
-  removing an image, editing an image's metadata.
-- **To run by hand**: after a change made outside the admin (FTP upload,
-  direct file editing, bulk import), no event notifies the plugin. Run
-  **Run all** or `bin/plugin galinf reindex`.
+  removing an image, editing an image's metadata — and saving the plugin's
+  settings when they change which images are shown (templates, source pages,
+  formats, hiding tags): the whole index is then updated after the save,
+  without creating thumbnails (run **Create missing thumbnails** if pages
+  entered the gallery).
+- **Changes made outside the admin** (FTP upload, direct file editing, git,
+  bulk import): no event notifies the plugin. Either run **Run all** or
+  `bin/plugin galinf reindex`, or set **Automatic index update** (General
+  tab) to every hour or every day: the first visit after that delay updates
+  the index once it has been served, missing thumbnails included.
 
 A reindex that runs to completion also removes articles that no longer exist
 from the index.
@@ -294,6 +313,19 @@ registered by another plugin from its own folder never is.
 > these addresses, but if your site has restricted pages, enabling this
 > option protects their original images too.
 
+Two limits to know:
+
+- **Only the `access:` rule is recognized** — the one the login plugin
+  reads. A page protected by another means (another plugin, a server rule, a
+  password on a folder) is not seen as restricted, and its images are
+  indexed like any other.
+- **The gallery's addresses are always public.** The feed
+  (`/gallery-feed.json`) and the info panel (`/gallery-meta.json`) answer
+  on their own, without rendering a page: a site closed to visitors as a
+  whole by a plugin (maintenance or "coming soon" page, a password for the
+  whole site) may still let anyone read them. Close the site at the web
+  server level if its images must not be reachable.
+
 ## Sorting by manual page order
 
 The "manual order" criterion follows the page tree as you arrange it by drag
@@ -326,10 +358,16 @@ mobile):
   the theme can style (e.g. `.galinf-meta-title`).
 - Read **on demand** (one request per article opened in the lightbox,
   `gallery-meta.json` endpoint), through Grav's native media API: **nothing is
-  stored in the index**, a change to a `.meta.yaml` shows up immediately,
-  without reindexing.
+  stored in the index**, a change to a `.meta.yaml` shows up without
+  reindexing (see the cache below).
 - The panel's open/closed state is remembered on the visitor's side. The
   **"Info panel (sidebar)"** option disables both the panel and the endpoint.
+- An image without any metadata shows a discreet "No information for this
+  image."
+- The panel's content (metadata and approved comments of an article) is kept
+  in Grav's cache: editing a page, a media or its metadata in the admin, or
+  posting, approving or deleting a comment, shows at once; a `.meta.yaml`
+  file changed by FTP or git shows within 10 minutes.
 
 ## Hiding an image with a tag
 
@@ -363,13 +401,11 @@ Both tag names are **configurable** in the plugin options (Gallery tab,
 "Hide an image with a tag" section); emptying a field disables that tag.
 Matching ignores case and extra spaces.
 
-> **Changing a keyword does not apply retroactively.** Since hiding is
-> computed at indexing time, images already hidden by the old keyword stay
-> hidden, and the new one only applies to articles reindexed afterwards.
-> After a change: **run a reindex** (Maintenance tab of the options, or
-> `bin/plugin galinf reindex`). No need to clear the cache — the new value is
-> read immediately. Adding or removing a tag on an image, on the other hand,
-> takes effect right away (automatic reindex of the article).
+> **Changing a keyword** is computed at indexing time: saving the settings
+> in the admin updates the index by itself. If you change it in the YAML
+> file instead, run a reindex (Maintenance tab, or
+> `bin/plugin galinf reindex`). Adding or removing a tag on an image takes
+> effect right away (automatic reindex of the article).
 
 These tags are **internal markers**: they are stripped from the lightbox info
 panel, and so never shown to visitors. An image whose `tags` only contained
@@ -377,7 +413,11 @@ markers simply no longer shows that line.
 
 > This filter only concerns the plugin's galleries: a hidden image remains
 > reachable by its URL and can still be used by the theme ("hero" image,
-> etc.), which reads `page.media` directly.
+> etc.), which reads `page.media` directly. **A hiding tag is a display
+> setting, not a protection**: the original, and its thumbnail if one was
+> made, are served to anyone who knows or guesses their address. To keep an
+> image private, put it on a page with an access rule (see "Restricted-access
+> pages").
 
 ## Comments
 
@@ -408,7 +448,11 @@ live through Flex events and recomputed on every reindex.
   `admin.galinf-comments` → update, or super administrator, to the accounts
   that should be.
   Required nickname: your choice. A comment left without a nickname is
-  signed "Anon".
+  signed "Anon". A nickname has 30 characters at most, and a visitor who is
+  not logged in cannot take the username or full name of an account of the
+  site (capitals, spaces, dots and hyphens are ignored when comparing).
+  Comments of logged-in members are shown with a ✓ "Member of the site"
+  mark, and the admin list shows their account.
 - **Length** (option): 300 characters by default, from 50 to 1000. The
   "characters left" counter appears once less than 20 % of the limit is left,
   or all the time if you enable "Counter always visible". In the admin,
@@ -417,7 +461,10 @@ live through Flex events and recomputed on every reindex.
   rate limit (hashed, 5 comments per 10 minutes) always apply, plus the
   check chosen in the **Anti-bot check** option:
   - **Galinf question** (default): a simple sum with a signed, single-use
-    token and a time trap. Nothing else to install.
+    token and a time trap. Nothing else to install. It stops generic spam
+    bots, not a script written for this plugin (the two numbers are in the
+    page): the per-IP limit, the daily cap and pre-moderation remain the real
+    safeguards against a determined sender.
   - **Cap**: a proof of work the visitor's browser computes in the
     background, with no click. Self-hosted: everything stays on your server.
   - **Cloudflare Turnstile**: Cloudflare's challenge, usually without a
@@ -493,6 +540,17 @@ Consequences:
 - An `.htaccess` is placed there automatically with a **long browser cache**
   (`immutable`, 1 year): thumbnail names are hashes, their content never
   changes. Requires Apache with `AllowOverride` (Grav's default).
+- **Nginx** ignores `.htaccess` files: the thumbnails are served all the
+  same, but without the long cache, so browsers ask for them again on every
+  visit. Add to the site's `server` block (adjust the path if Grav is in a
+  sub-folder):
+
+  ```nginx
+  location ^~ /galinf-thumbs/ {
+      add_header Cache-Control "public, max-age=31536000, immutable";
+      try_files $uri =404;
+  }
+  ```
 - If a **thumbnail file disappears** from disk (folder emptied by hand,
   partial restore), the gallery shows the original in its place instead of a
   broken image; **Create missing thumbnails** recreates the files.
@@ -512,7 +570,10 @@ From the box that lists them, each oversized image can be **shrunk in place**
 ("Shrink" button, or checkboxes then "Shrink selection"): it is brought just
 under the limit, then its thumbnail is created. From the command line:
 `bin/plugin galinf shrink-oversized` (`--yes` to skip confirmation). Allow a
-few seconds and 100 to 200 MB of memory per image.
+few seconds and about 5 bytes of memory per pixel (125 MB for 25 megapixels).
+Beyond **100 megapixels**, an image is not shrunk on the server (it would ask
+for too much memory): it stays listed with the reason, shrink it on a
+computer and upload it again.
 
 > **The original is replaced permanently**, with no backup copy, and its
 > **EXIF data is lost** (the orientation is applied to the image first). The

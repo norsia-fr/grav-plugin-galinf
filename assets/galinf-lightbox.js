@@ -472,8 +472,14 @@
             sbMeta.innerHTML = '';
             var meta = (payload.meta || {})[file];
             var keys = meta ? Object.keys(meta) : [];
-            // Nothing to show → the section simply stays empty (no "No
-            // information" message).
+            // Nothing to show while the panel is meant to show metadata: a
+            // discreet note rather than an empty space.
+            if (!keys.length && payload.meta_shown) {
+              var noInfo = document.createElement('p');
+              noInfo.className = 'galinf-sb-none';
+              noInfo.textContent = t('NO_INFO');
+              sbMeta.appendChild(noInfo);
+            }
             keys.forEach(function (k) {
               var block = document.createElement('div');
               block.className = 'galinf-meta galinf-meta-' + k.replace(/[^a-zA-Z0-9_-]/g, '-');
@@ -749,6 +755,15 @@
             var who = document.createElement('span');
             who.className = 'galinf-comment-name';
             who.textContent = c.name || 'Anon';
+            if (c.member) {
+              // Posted by a logged-in member of the site.
+              var badge = document.createElement('span');
+              badge.className = 'galinf-comment-member';
+              badge.textContent = '✓';
+              badge.title = t('MEMBER');
+              badge.setAttribute('aria-label', t('MEMBER'));
+              who.appendChild(badge);
+            }
             var when = document.createElement('span');
             when.className = 'galinf-comment-date';
             when.textContent = fmtDate(c.date);
@@ -819,7 +834,7 @@
           if (!payload.authed) {
             nameInput = document.createElement('input');
             nameInput.type = 'text';
-            nameInput.maxLength = 60;
+            nameInput.maxLength = 30;
             nameInput.placeholder = t(payload.need_name ? 'NAME_REQUIRED' : 'NAME_OPTIONAL');
             try { nameInput.value = localStorage.getItem('galinf-pseudo') || ''; } catch (e) {}
             fields.appendChild(nameInput);

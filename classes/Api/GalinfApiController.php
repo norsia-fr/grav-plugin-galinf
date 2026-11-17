@@ -100,6 +100,18 @@ class GalinfApiController extends AbstractApiController
     }
 
     /**
+     * POST /galinf/shuffle — draws a new precomputed shuffle for the
+     * "random" order (shared mode). A few hundred milliseconds even for
+     * tens of thousands of images.
+     */
+    public function shuffle(ServerRequestInterface $request): ResponseInterface
+    {
+        $this->requirePermission($request, 'api.system.write');
+
+        return ApiResponse::create(ReindexService::shuffle());
+    }
+
+    /**
      * GET /galinf/stats — number of indexed images + last indexing date.
      */
     public function stats(ServerRequestInterface $request): ResponseInterface
