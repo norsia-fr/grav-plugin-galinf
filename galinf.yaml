@@ -18,7 +18,8 @@ roots: []
 auto_reindex: 'never'
 
 # Image extensions included in the gallery (without the dot).
-# GIF is included (it animates in the gallery). SVG not recommended.
+# GIF is included (it animates in the gallery). SVG is refused even if listed
+# (it can carry scripts, and has no thumbnail).
 extensions:
   - jpg
   - jpeg

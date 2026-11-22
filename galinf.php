@@ -403,7 +403,7 @@ class GalinfPlugin extends Plugin
     private function metaContent(PageInterface $page, bool $enabled, bool $showMeta, bool $showExif, array $hiddenTags): array
     {
         $route = (string) $page->route();
-        $extensions = array_map('strtolower', (array) $this->config->get('plugins.galinf.extensions', ['jpg', 'jpeg', 'png', 'webp', 'gif']));
+        $extensions = \Grav\Plugin\Galinf\Settings::extensions();
         $generation = (string) $this->getDb()->getMeta('meta_cache_gen');
         $signature = md5(json_encode([
             $generation,
@@ -692,10 +692,10 @@ class GalinfPlugin extends Plugin
         }
 
         // The file must be an image medium of the page (allow list).
-        $extensions = (array) $this->config->get('plugins.galinf.extensions', ['jpg', 'jpeg', 'png', 'webp', 'gif']);
+        $extensions = \Grav\Plugin\Galinf\Settings::extensions();
         $ext = strtolower((string) pathinfo($file, PATHINFO_EXTENSION));
         $media = new \Grav\Common\Page\Media($page->path());
-        if ($file === '' || !\in_array($ext, array_map('strtolower', $extensions), true)
+        if ($file === '' || !\in_array($ext, $extensions, true)
             || !\array_key_exists($file, $media->all())) {
             $this->refuse('unknown_image', 404, $retry);
         }
@@ -798,6 +798,19 @@ class GalinfPlugin extends Plugin
     /**
      * Does the Origin header, if present, designate this site? Absent
      * (non-browser client) → accepted: the X-Galinf header is still required.
+     *
+     * The PORT is deliberately not compared (decision of 11/22/2026, audit
+     * 2.0.2 point A6): behind a reverse proxy the browser sends
+     * `https://site` (port implied) while PHP may see `site:8080` or an
+     * X-Forwarded-Host without a port, and a strict comparison would refuse
+     * legitimate comments. This is safe as long as the first barrier holds:
+     * a page on another port is another origin, so the X-Galinf header
+     * forces a CORS preflight, and this route answers none (OPTIONS → 404,
+     * no Access-Control-* header). Tighten this (host AND port, default
+     * port from the scheme, X-Forwarded-Proto/Port) if this route ever
+     * answers preflights or stops requiring X-Galinf: cookies are not
+     * isolated by port, so a page on `site:8080` could otherwise make a
+     * logged-in visitor post a comment in their name, with no captcha.
      */
     private function sameOrigin(): bool
     {
@@ -865,6 +878,7 @@ class GalinfPlugin extends Plugin
         if ($value === '') {
             $value = bin2hex(random_bytes(32));
             @mkdir($dir, 0775, true);
+            \Grav\Plugin\Galinf\PrivateFolder::protect($dir);
             @file_put_contents($file, $value);
             @chmod($file, 0600);
         }

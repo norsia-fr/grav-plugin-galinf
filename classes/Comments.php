@@ -266,6 +266,13 @@ class Comments
         $object = $dir->createObject($data);
         $object->save();
 
+        // The first comment creates user/data/galinf/: protected right away
+        // (see PrivateFolder).
+        $folder = PrivateFolder::dataFolder();
+        if ($folder !== null) {
+            PrivateFolder::protect($folder);
+        }
+
         return $data;
     }
 

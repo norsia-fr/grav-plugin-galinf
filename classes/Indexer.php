@@ -73,13 +73,11 @@ class Indexer
         $this->templates = $templates;
         $this->thumbWidth = $thumbWidth;
         $this->roots = $roots;
-        // Normalize: lowercase, no dot, no duplicate.
-        $this->extensions = array_values(array_unique(array_filter(array_map(
-            static fn($e) => strtolower(ltrim(trim((string) $e), '.')),
-            $extensions
-        ))));
+        // Normalize (lowercase, no dot, no duplicate), without the refused
+        // formats (SVG: see Settings::REFUSED_EXTENSIONS).
+        $this->extensions = Settings::cleanExtensions($extensions);
         if ($this->extensions === []) {
-            $this->extensions = ['jpg', 'jpeg', 'png', 'webp', 'gif'];
+            $this->extensions = Settings::DEFAULT_EXTENSIONS;
         }
     }
 

@@ -37,4 +37,63 @@ final class Settings
 
         return max($min, min($max, (int) $value));
     }
+
+    /** Image extensions when none is set (or none is accepted). */
+    public const DEFAULT_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'gif'];
+
+    /**
+     * Extensions refused even when listed in `extensions`. An SVG file can
+     * carry scripts: opened on its own (link to the original), they run on
+     * the site's address, with the session of whoever opens it — an admin
+     * included. GD cannot make a thumbnail of it either, and its size is not
+     * always readable, which the justified layout needs.
+     */
+    public const REFUSED_EXTENSIONS = ['svg', 'svgz'];
+
+    /**
+     * The `extensions` setting, normalized (lowercase, no dot, no duplicate)
+     * and without the refused ones; the defaults if nothing is left.
+     *
+     * @return string[]
+     */
+    public static function extensions(): array
+    {
+        return self::cleanExtensions((array) Grav::instance()['config']->get('plugins.galinf.extensions', self::DEFAULT_EXTENSIONS));
+    }
+
+    /**
+     * @param array<mixed> $list
+     * @return string[]
+     */
+    public static function cleanExtensions(array $list): array
+    {
+        $clean = array_values(array_diff(self::normalize($list), self::REFUSED_EXTENSIONS));
+
+        return $clean !== [] ? $clean : self::DEFAULT_EXTENSIONS;
+    }
+
+    /**
+     * Refused extensions present in the setting (the Maintenance tab says
+     * they are ignored).
+     *
+     * @return string[]
+     */
+    public static function refusedExtensions(): array
+    {
+        $list = (array) Grav::instance()['config']->get('plugins.galinf.extensions', self::DEFAULT_EXTENSIONS);
+
+        return array_values(array_intersect(self::normalize($list), self::REFUSED_EXTENSIONS));
+    }
+
+    /**
+     * @param array<mixed> $list
+     * @return string[]
+     */
+    private static function normalize(array $list): array
+    {
+        return array_values(array_unique(array_filter(array_map(
+            static fn($e) => is_scalar($e) ? strtolower(ltrim(trim((string) $e), '.')) : '',
+            $list
+        ), static fn(string $e): bool => $e !== '')));
+    }
 }

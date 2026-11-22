@@ -17,17 +17,30 @@ use SQLite3;
 class IndexDatabase
 {
     private string $path;
+    private ?string $legacyPath;   // LEGACY 2.1.0 (remove in 3.0)
     private ?SQLite3 $db = null;
 
-    public function __construct(string $path)
+    /**
+     * @param string      $path       the database file
+     * @param string|null $legacyPath where an older version kept it: moved
+     *                                to $path the first time it is opened
+     *                                (LEGACY 2.1.0, remove in 3.0)
+     */
+    public function __construct(string $path, ?string $legacyPath = null)
     {
         $this->path = $path;
+        $this->legacyPath = $legacyPath;
     }
 
     /**
      * The gallery's database, always at the same place:
-     * user/data/gallery-index/gallery.sqlite (a folder the web server never
-     * serves). Single entry point: plugin, service, API and CLI.
+     * user/data/galinf/gallery.sqlite, next to the comments (a folder the
+     * web server never serves, see PrivateFolder). Single entry point:
+     * plugin, service, API and CLI.
+     *
+     * Up to 2.1.0 it was in user/data/gallery-index/: moved from there by
+     * itself the first time it is opened (see moveLegacy; LEGACY 2.1.0, the
+     * second argument goes in 3.0).
      *
      * The old `db_path` option is no longer read: a path chosen in the
      * configuration could put the database where the web server serves it,
@@ -39,13 +52,163 @@ class IndexDatabase
         if (!\is_string($data) || $data === '') {
             $data = (\defined('GRAV_ROOT') ? GRAV_ROOT : getcwd()) . '/user/data';
         }
+        $data = rtrim($data, '/');
 
-        return new self(rtrim($data, '/') . '/gallery-index/gallery.sqlite');
+        return new self($data . '/galinf/gallery.sqlite', $data . '/gallery-index/gallery.sqlite');
     }
 
     public function path(): string
     {
         return $this->path;
+    }
+
+    /* ==== LEGACY 2.1.0 — BEGIN ========================================
+     * Move of the database from user/data/gallery-index/ (versions up to
+     * 2.1.0) to user/data/galinf/. Kept for the whole 2.x branch: a site can
+     * skip versions and install a later 2.x straight from 2.1.0; without
+     * this code it would start on an empty index. Costs one file check per
+     * request once the move is done.
+     *
+     * To remove in 3.0 (CHANGELOG: "from a version older than 2.1.1, update
+     * to the last 2.x first"): everything between BEGIN and END, the
+     * `$legacyPath` property and constructor argument, the second argument
+     * in fromConfig(), the LEGACY 2.1.0 blocks of connect() and of
+     * ReindexService::removeData(), the mention in PrivateFolder and the
+     * paragraph "Up to version 2.1.0…" of the README.
+     * `grep -rn "LEGACY 2.1.0"` finds every place.
+     * ==================================================================== */
+
+    /** Where versions up to 2.1.0 kept the database (null: none). */
+    public function legacyPath(): ?string
+    {
+        return $this->legacyPath;
+    }
+
+    /**
+     * Moves the database of a version up to 2.1.0 to its current place,
+     * without a reindex (index, shuffle, comment counters, limits kept).
+     *
+     * Several requests can arrive at once: the first one takes a file lock
+     * and moves; the others wait, then find the new file and use it. The new
+     * code never opens the old file otherwise, so nothing writes to it while
+     * it is copied. The copy goes through SQLite's backup API (it includes
+     * what is still in the `-wal` file), into a temporary file renamed at
+     * the end: the new file only appears complete.
+     *
+     * On failure (disk quota, folder not writable, file locks not supported),
+     * the old file is left as it was and keeps being used. A dated marker
+     * next to it (MOVE_FAILED) makes the following requests use it directly
+     * for an hour, with neither a new attempt nor a log line: on a shared
+     * host, a lasting failure must not cost a full copy of the database and
+     * a warning on every visit. Retried at most once an hour.
+     */
+    private function moveLegacy(): void
+    {
+        $legacy = (string) $this->legacyPath;
+        if ($this->moveFailedRecently()) {
+            $this->path = $legacy;
+            return;
+        }
+
+        if (!is_dir(\dirname($this->path))) {
+            $this->useLegacy('could not create ' . \dirname($this->path));
+            return;
+        }
+
+        $lockFile = $this->path . '.moving.lock';
+        $lock = @fopen($lockFile, 'c');
+        if ($lock === false || !flock($lock, LOCK_EX)) {
+            $this->useLegacy('could not take the move lock');
+            if ($lock !== false) {
+                fclose($lock);
+            }
+            return;
+        }
+
+        $tmp = $this->path . '.moving';
+        try {
+            clearstatcache();
+            if (is_file($this->path) || !is_file($legacy)) {
+                return;   // moved by another request in the meantime
+            }
+            if ($this->moveFailedRecently()) {
+                // failed in the request we were waiting for: no new attempt
+                $this->path = $legacy;
+                return;
+            }
+
+            @unlink($tmp);
+            $src = new SQLite3($legacy);
+            $src->busyTimeout(5000);
+            $dst = new SQLite3($tmp);
+            $copied = $src->backup($dst);
+            $error = $copied ? '' : $src->lastErrorMsg();
+            $dst->close();
+            $src->close();   // last connection: SQLite folds the -wal file back in
+            if (!$copied) {
+                throw new RuntimeException('copy failed: ' . $error);
+            }
+            if (!@rename($tmp, $this->path)) {
+                throw new RuntimeException('could not rename the copy');
+            }
+
+            foreach ([$legacy, $legacy . '-wal', $legacy . '-shm', $legacy . self::MOVE_FAILED] as $file) {
+                if (is_file($file)) {
+                    @unlink($file);
+                }
+            }
+            PrivateFolder::removeIfEmpty(\dirname($legacy));
+            self::log('info', 'galinf: index database moved to ' . $this->path);
+        } catch (\Throwable $e) {
+            @unlink($tmp);
+            $this->useLegacy($e->getMessage());
+        } finally {
+            flock($lock, LOCK_UN);
+            fclose($lock);
+            clearstatcache();
+            if (is_file($this->path)) {
+                @unlink($lockFile);   // nobody will need it again
+            }
+        }
+    }
+
+    /** Suffix of the marker left next to the old file after a failed move. */
+    public const MOVE_FAILED = '.move-failed';
+
+    /** Delay before a failed move is tried again (s). */
+    private const MOVE_RETRY = 3600;
+
+    private function moveFailedRecently(): bool
+    {
+        clearstatcache();
+        $mtime = @filemtime($this->legacyPath . self::MOVE_FAILED);
+
+        return $mtime !== false && $mtime > time() - self::MOVE_RETRY;
+    }
+
+    /**
+     * The move failed: this request keeps working on the old file, and the
+     * marker puts off the next attempt (see moveLegacy).
+     */
+    private function useLegacy(string $why): void
+    {
+        self::log('warning', 'galinf: could not move the index database (' . $why . '); still using '
+            . $this->legacyPath . ', next attempt in an hour');
+        if ($this->legacyPath !== null && is_file($this->legacyPath)) {
+            @touch($this->legacyPath . self::MOVE_FAILED);
+            $this->path = $this->legacyPath;
+        }
+    }
+
+    /* ==== LEGACY 2.1.0 — END ========================================== */
+
+    private static function log(string $level, string $message): void
+    {
+        try {
+            Grav::instance()['log']->{$level}($message);
+        } catch (\Throwable $e) {
+            error_log($message);
+        }
     }
 
     /**
@@ -65,10 +228,30 @@ class IndexDatabase
             );
         }
 
+        // LEGACY 2.1.0 (remove in 3.0): database of a version up to 2.1.0,
+        // not moved yet. In 3.0, $pending is false and goes, with the
+        // protection of the old folder and the call to moveLegacy() below.
+        $pending = $this->legacyPath !== null && !is_file($this->path) && is_file($this->legacyPath);
+
         $dir = \dirname($this->path);
         if (!is_dir($dir) && !@mkdir($dir, 0775, true) && !is_dir($dir)) {
-            throw new RuntimeException("Could not create the index folder: {$dir}");
+            if (!$pending) {
+                throw new RuntimeException("Could not create the index folder: {$dir}");
+            }
+            // otherwise the old file keeps working (moveLegacy)
+        } else {
+            // Deny-all .htaccess in the private folders (sites still on Grav
+            // 1.7's server rules would otherwise serve gallery.sqlite).
+            PrivateFolder::protect($dir);
         }
+        // LEGACY 2.1.0 (remove in 3.0)
+        if ($this->legacyPath !== null && is_dir(\dirname($this->legacyPath))) {
+            PrivateFolder::protect(\dirname($this->legacyPath));
+        }
+        if ($pending) {
+            $this->moveLegacy();
+        }
+        // LEGACY 2.1.0 — end
 
         $this->db = new SQLite3($this->path);
         $this->db->busyTimeout(5000);

@@ -452,6 +452,15 @@ class GalinfReindexField extends HTMLElement {
             <strong>${T('ROUTE_ISSUE_TITLE')}</strong> ${T('ROUTE_ISSUE_TEXT', { keys: keys.map((k) => this._esc(k)).join(', ') })}</div>`;
     }
 
+    // Refused formats listed in the "extensions" option (SVG): ignored,
+    // say so — otherwise adding one seems to do nothing.
+    _extensionHtml() {
+        const exts = this._stats?.extension_issues || [];
+        if (!exts.length) return '';
+        return `<div class="missing scope" role="status">
+            <strong>${T('EXT_ISSUE_TITLE')}</strong> ${T('EXT_ISSUE_TEXT', { exts: exts.map((e) => this._esc(e)).join(', ') })}</div>`;
+    }
+
     // Figures header of the block: three markers readable at a glance.
     _tilesHtml() {
         if (!this._stats) return `<div class="tiles"><div class="tile"><b>—</b><span>${T('STATS_UNAVAILABLE')}</span></div></div>`;
@@ -685,6 +694,7 @@ class GalinfReindexField extends HTMLElement {
             ${this._scopeHtml()}
             ${this._captchaHtml()}
             ${this._routeHtml()}
+            ${this._extensionHtml()}
             <div class="box">
                 ${this._tilesHtml()}
                 <div class="body">

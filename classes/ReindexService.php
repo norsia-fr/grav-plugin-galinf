@@ -401,13 +401,27 @@ class ReindexService
         $path = $db->path();
         $db->close();
         $index = false;
-        foreach ([$path, $path . '-wal', $path . '-shm'] as $file) {
+        $files = [$path, $path . '-wal', $path . '-shm'];
+        // LEGACY 2.1.0 (remove in 3.0): leftovers of the move (temporary
+        // copy, lock) and the folder of versions up to 2.1.0, if the move
+        // never happened.
+        $legacy = $db->legacyPath();
+        array_push($files, $path . '.moving', $path . '.moving.lock');
+        if ($legacy !== null) {
+            array_push($files, $legacy, $legacy . '-wal', $legacy . '-shm', $legacy . IndexDatabase::MOVE_FAILED);
+        }
+        foreach ($files as $file) {
             if (is_file($file)) {
                 $freed += (int) filesize($file);
                 $index = @unlink($file) || $index;
             }
         }
-        @rmdir(\dirname($path)); // only if it is empty
+        // Only if nothing but the plugin's own .htaccess is left (the
+        // comments share user/data/galinf: it stays while they do).
+        PrivateFolder::removeIfEmpty(\dirname($path));
+        if ($legacy !== null) {   // LEGACY 2.1.0 (remove in 3.0)
+            PrivateFolder::removeIfEmpty(\dirname($legacy));
+        }
 
         $comments = null;
         if ($withComments) {
@@ -417,7 +431,8 @@ class ReindexService
                 [$comments, $bytes] = self::measureTree($folder, 'index.yaml');
                 $freed += $bytes;
                 Folder::delete($folder);
-                @rmdir(\dirname($folder)); // user/data/galinf, if it is empty
+                // user/data/galinf, if nothing but its .htaccess is left
+                PrivateFolder::removeIfEmpty(\dirname($folder));
                 Comments::refresh();
             }
         }
@@ -512,6 +527,8 @@ class ReindexService
             'random_mode'     => $config->get('plugins.galinf.random_mode', 'shared') === 'live' ? 'live' : 'shared',
             // Route options refused (default used instead), see Routes.
             'route_issues'    => Routes::issues(),
+            // Refused formats listed in `extensions` (SVG), ignored.
+            'extension_issues' => Settings::refusedExtensions(),
             // No page chosen yet (default after installing): the admin says so.
             'scope_empty'     => !Indexer::fromConfig($db)->hasScope(),
             // Comment captcha that cannot work (only matters when visitors who

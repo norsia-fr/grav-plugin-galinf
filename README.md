@@ -211,6 +211,37 @@ bin/plugin galinf shrink-oversized [--yes]    # shrinks oversized images in plac
 bin/plugin galinf uninstall-data [--comments] [--yes]   # before uninstalling: deletes index and thumbnails
 ```
 
+## Private data and the web server
+
+All the plugin's data is in `user/data/galinf/`: the index database
+(`gallery.sqlite`, with its `-wal` and `-shm` files) and the comments
+(`comments/`). It must never be served over HTTP. Grav 2's own `.htaccess` and Nginx sample refuse everything
+under `user/data/`. A site upgraded from Grav 1.7 often keeps its old server
+rules, which only refuse some extensions under `user/` (`.yaml`, `.md`…):
+`gallery.sqlite` would then be downloadable, with the titles of scheduled
+articles that are not published yet.
+
+- **Apache**: the plugin places a deny-all `.htaccess` in that folder by
+  itself, whatever the site's rules (requires `AllowOverride`, Grav's
+  default). An `.htaccess` already there is left alone.
+- **Nginx** ignores `.htaccess` files: check that the site's `server` block
+  has Grav 2's rule (adjust the path if Grav is in a sub-folder):
+
+  ```nginx
+  location ~* ^/user/(env/[^/]+/)?data/.*$ { return 403; }
+  ```
+
+To check: `https://your-site/user/data/galinf/gallery.sqlite` must answer
+403 (or 404), never download a file.
+
+<!-- LEGACY 2.1.0: paragraph to remove in 3.0 -->
+Up to version 2.1.0 the index database was in `user/data/gallery-index/`. It
+is moved to `user/data/galinf/` by itself, the first time the gallery is
+opened after the update, without a reindex (index, random order, comment
+counters kept); the old folder is then removed. If the move fails (disk
+quota, folder not writable), the gallery keeps using the old file, logs a
+warning in `logs/grav.log` and tries again at most once an hour.
+
 ## Uninstalling
 
 Removing the plugin does not delete what it created on the server. This is
@@ -222,7 +253,7 @@ To get back to a clean site, delete its data **just before** uninstalling it:
 
 | Data | Location | Deleted |
 |---|---|---|
-| Gallery index | `user/data/gallery-index/` | yes |
+| Gallery index | `user/data/galinf/gallery.sqlite` | yes |
 | Thumbnails | `galinf-thumbs/` at the site root | yes |
 | Visitor comments | `user/data/galinf/comments/` | **only on request** (checkbox, or `--comments`) |
 | Settings | `user/config/plugins/galinf.yaml` | no |
@@ -423,7 +454,8 @@ markers simply no longer shows that line.
 
 Each image can be commented on from the lightbox info panel. The flat-file
 spirit is kept: each comment is a **Flex object** (a small YAML file under
-`user/data/galinf/comments/`, never reachable over HTTP), through a
+`user/data/galinf/comments/`, never reachable over HTTP: see
+[Private data and the web server](#private-data-and-the-web-server)), through a
 `galinf-comments` directory the plugin declares itself — the **flex-objects**
 plugin (shipped with Grav 2) is required. The SQLite index only keeps a
 **counter** (badge on the grid thumbnails, "Commented" sort), kept in sync

@@ -1,3 +1,11 @@
+# v2.1.1
+## 11/22/2026
+
+1. [](#improved)
+    * **Security: SVG refused** in "Included image extensions", even when listed: an SVG file can carry scripts, which would run on the site's address when the image is opened on its own (an admin's session included); it cannot have a thumbnail either. An SVG already listed is ignored (gallery, info panel, comments) and the Maintenance tab says so.
+    * **All the plugin's data in one folder**: the index database moves from `user/data/gallery-index/` to `user/data/galinf/`, next to the comments. Done by itself the first time the gallery is opened after the update, without a reindex: index, random order, comment counters and limits are kept. Several visits arriving at once are safe (only one moves the file, the others wait); if the move fails (disk quota, folder not writable), the old file keeps working and the move is tried again at most once an hour, so a lasting failure costs neither a copy nor a log line on every visit. "Delete the data" also removes the old folder if it is still there.
+    * **Security (hardening)**: the plugin places a deny-all `.htaccess` in `user/data/galinf/` (and in the old `user/data/gallery-index/` while it exists). Grav 2's server rules already refuse `user/data/`, but a site upgraded from Grav 1.7 that kept its old `.htaccess` served `gallery.sqlite` (titles of scheduled articles not yet published, among others). An `.htaccess` already there is left alone; "Delete the data" removes it along with the folders. README: new "Private data and the web server" section, with the Nginx rule.
+
 # v2.1.0
 ## 11/17/2026
 
