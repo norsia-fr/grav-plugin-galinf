@@ -46,7 +46,8 @@ final class Settings
      * carry scripts: opened on its own (link to the original), they run on
      * the site's address, with the session of whoever opens it — an admin
      * included. GD cannot make a thumbnail of it either, and its size is not
-     * always readable, which the justified layout needs.
+     * always readable, which the justified layout needs. Same list in
+     * admin-next/fields/galinf-extensions-note.js (note under the setting).
      */
     public const REFUSED_EXTENSIONS = ['svg', 'svgz'];
 
@@ -70,19 +71,6 @@ final class Settings
         $clean = array_values(array_diff(self::normalize($list), self::REFUSED_EXTENSIONS));
 
         return $clean !== [] ? $clean : self::DEFAULT_EXTENSIONS;
-    }
-
-    /**
-     * Refused extensions present in the setting (the Maintenance tab says
-     * they are ignored).
-     *
-     * @return string[]
-     */
-    public static function refusedExtensions(): array
-    {
-        $list = (array) Grav::instance()['config']->get('plugins.galinf.extensions', self::DEFAULT_EXTENSIONS);
-
-        return array_values(array_intersect(self::normalize($list), self::REFUSED_EXTENSIONS));
     }
 
     /**

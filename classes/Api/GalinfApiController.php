@@ -122,6 +122,18 @@ class GalinfApiController extends AbstractApiController
     }
 
     /**
+     * GET /galinf/formats — what this server can do with each image format
+     * (note under "Included image extensions"). Same permission as reading
+     * the plugin's settings.
+     */
+    public function formats(ServerRequestInterface $request): ResponseInterface
+    {
+        $this->requirePermission($request, 'api.config.read');
+
+        return ApiResponse::create(\Grav\Plugin\Galinf\ImageFormats::report());
+    }
+
+    /**
      * GET /galinf/missing-thumbs — full list of images without a thumbnail
      * (the stats only return the first 20).
      */

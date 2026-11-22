@@ -1,7 +1,7 @@
 name: Galinf — Infinite gallery
 slug: galinf
 type: plugin
-version: 2.1.1
+version: 2.1.2
 description: One endlessly scrolling gallery of the images of the pages you select, even tens of thousands, with a PhotoSwipe lightbox and optional comments.
 icon: images
 author:
@@ -69,6 +69,11 @@ form:
               help: PLUGIN_GALINF.EXTENSIONS_HELP
               value_only: true
               placeholder_value: jpg
+
+            # Note shown under the list while it holds SVG (left out of the
+            # gallery). Display only: takes no part in saving.
+            extensions_note:
+              type: galinf-extensions-note
 
             auto_reindex:
               type: select

@@ -1057,6 +1057,9 @@ class GalinfPlugin extends Plugin
         // Orphan comments (page or image gone).
         $routes->post('/galinf/purge-orphan-comments', [$controller, 'purgeOrphanComments']);
         $routes->get('/galinf/stats', [$controller, 'stats']);
+        // What the server can do with each image format (note under the
+        // "Included image extensions" setting).
+        $routes->get('/galinf/formats', [$controller, 'formats']);
         // New precomputed shuffle for the "random" order.
         $routes->post('/galinf/shuffle', [$controller, 'shuffle']);
         // Images too large for Grav to resize (> max_pixels).

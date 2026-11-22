@@ -527,8 +527,6 @@ class ReindexService
             'random_mode'     => $config->get('plugins.galinf.random_mode', 'shared') === 'live' ? 'live' : 'shared',
             // Route options refused (default used instead), see Routes.
             'route_issues'    => Routes::issues(),
-            // Refused formats listed in `extensions` (SVG), ignored.
-            'extension_issues' => Settings::refusedExtensions(),
             // No page chosen yet (default after installing): the admin says so.
             'scope_empty'     => !Indexer::fromConfig($db)->hasScope(),
             // Comment captcha that cannot work (only matters when visitors who

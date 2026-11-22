@@ -1,3 +1,10 @@
+# v2.1.2
+## 11/22/2026
+
+1. [](#improved)
+    * **SVG in "Included image extensions"**: a note now shows right under the list, in the General tab, as soon as SVG is added (before saving), saying that these files are left out of the gallery and that nothing else changes. It replaces the notice of the Maintenance tab, which only appeared after reloading the page.
+    * **Image formats checked before indexing**: the same place also warns, as the list is typed, about a format Grav does not know (its files are never indexed), a format most browsers do not display (tiff…: empty tiles), and a format this site cannot make thumbnails of (Grav does not resize it, or the server's image engine, GD or Imagick, does not handle it: the originals are served). New admin endpoint `GET /galinf/formats` (permission `api.config.read`).
+
 # v2.1.1
 ## 11/22/2026
 
